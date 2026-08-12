@@ -23,9 +23,6 @@
 #define TURN_SPEED   170
 
 
-#define ENCODER_1   2
-#define ENCODER_2   3
-
 // ---------------- PIXY2 CAMERA ----------------
 // Native Pixy2 CCC resolution (matches the block x:0-315, y:0-207 range).
 #define PIXY_FRAME_WIDTH     316
