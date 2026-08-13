@@ -1,19 +1,19 @@
 #pragma once
 
 // ---------------- MOTOR PINS ----------------
-#define PIN_R_IN1  37   // right front direction
-#define PIN_R_IN2  36
-#define PIN_R_IN3  35   // right rear direction
-#define PIN_R_IN4  34
-#define PIN_R_FRONT  2    // right front speed (PWM)
-#define PIN_R_REAR  3    // right rear speed (PWM)
+#define PIN_R_IN1  33   // right front direction
+#define PIN_R_IN2  32
+#define PIN_R_IN3  31   // right rear direction
+#define PIN_R_IN4  30
+#define PIN_R_FRONT  6    // right front speed (PWM)
+#define PIN_R_REAR  7    // right rear speed (PWM)
 
-#define PIN_L_IN1  33   // left front direction
-#define PIN_L_IN2  32
-#define PIN_L_IN3  31   // left rear direction
-#define PIN_L_IN4  30
-#define PIN_L_FRONT  4    // left front speed (PWM)
-#define PIN_L_REAR  5    // left rear speed (PWM)
+#define PIN_L_IN1  29   // left front direction
+#define PIN_L_IN2  28
+#define PIN_L_IN3  27   // left rear direction
+#define PIN_L_IN4  26
+#define PIN_L_FRONT  8    // left front speed (PWM)
+#define PIN_L_REAR  9    // left rear speed (PWM)
 
 // ---------------- TIMING / SPEED ----------------
 #define DRIVE_MS    5000   // how long to drive forward
@@ -47,8 +47,8 @@
 #define ECHO_FRONT 46
 #define TRIG_LEFT 49
 #define ECHO_LEFT 48
-#define TRIG_RIGHT 51
-#define ECHO_RIGHT 52
+#define TRIG_RIGHT 45   // moved off 51 -- Pixy2's hardware SPI (MOSI) lives there on a Mega2560
+#define ECHO_RIGHT 44   // moved off 52 -- Pixy2's hardware SPI (SCK) lives there on a Mega2560
 
 // Front distance (cm) at which the robot is close enough to the drop-off wall
 #define SONAR_DROPZONE_STOP_CM  15
@@ -59,5 +59,25 @@
 // Placeholder: how long to drive straight (open-loop, no PID yet) before the
 // front sonar starts being polled. Retune once PID/speed is characterized.
 #define DRIVE_BEFORE_SONAR_MS  2000
+
+// ---------------- ENCODERS (LM393 IR slot sensor, single-channel) ----------------
+// must be attachInterrupt()-capable on your board (e.g. on a Mega2560: 2, 3, 18, 19, 20, 21),
+// since ticks are counted via ISR.
+
+// Sentinel for "not wired yet" -- Encoder.cpp skips attachInterrupt() for any
+// ENCODER_*_PIN still set to this, so it's safe to compile/run before wiring.
+#define PIN_NOT_WIRED  -1
+
+#define ENCODER_LF_PIN  2   // left front
+#define ENCODER_LR_PIN  3   // left rear
+#define ENCODER_RF_PIN  18   // right front
+#define ENCODER_RR_PIN  19   // right rear
+
+
+
+// ---------------- IMU ----------------
+#define IMU_ATX 20
+#define IMU_RTX 21
+
 
 

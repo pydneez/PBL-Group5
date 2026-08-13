@@ -2,11 +2,11 @@
 #include <Pixy2.h>
 #include "Pixy.h"
 
-// callers only interact through pixyDetectInit()/pixyDetect(),
+// callers only interact through pixyInit()/pixyDetect(),
 // they never need the Pixy2/Block types directly.
 static Pixy2 pixy;
 
-void pixyDetectInit() {
+void pixyInit() {
   pixy.init();
 }
 
