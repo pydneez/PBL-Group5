@@ -27,6 +27,7 @@ void sonarInit() {
 
   pinMode(TRIG_RIGHT, OUTPUT);
   pinMode(ECHO_RIGHT, INPUT);
+  Serial.println("Sonar Setup Complete");
 }
 
 float sonarGetFrontCm() { return sonarGetDistanceCm(TRIG_FRONT, ECHO_FRONT); }
