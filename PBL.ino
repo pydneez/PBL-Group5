@@ -12,7 +12,9 @@ enum class DriveState {
   LOCATE_DROPZONE,   // waiting for Pixy to confirm the matching drop-off marker
   DRIVE_FORWARD,     // driving straight, open-loop; sonar polling starts after DRIVE_BEFORE_SONAR_MS
   DROPPING_CUBE,     // stopped within SONAR_DROPZONE_STOP_CM; grabber not implemented yet
-  DRIVE_BACKWARD     // driving away from drop-off wall
+  DRIVE_BACKWARD,   // driving away from drop-off wall
+  TURN_RIGHT,
+  TURN_LEFT
 };
 
 // Set by DETECT_CUBE; drives both the turn direction and which drop-off
@@ -37,6 +39,8 @@ const char* stateName(DriveState s) {
   switch (s) {
     case DriveState::IDLE:             return "IDLE";
     case DriveState::DETECT_CUBE:      return "DETECT_CUBE";
+    case DriveState::TURN_RIGHT: return "TURN_RIGHT";
+    case DriveState::TURN_LEFT: return "TURN_LEFT";
     case DriveState::TURN_TO_DROPZONE: return "TURN_TO_DROPZONE";
     case DriveState::LOCATE_DROPZONE:  return "LOCATE_DROPZONE";
     case DriveState::DRIVE_FORWARD:    return "DRIVE_FORWARD";
@@ -65,7 +69,7 @@ void setup() {
     Serial.begin(115200);
     motorsInit();
     sonarInit();
-    pixyDetectInit();
+    pixyInit();
     stopAll();
 
     setState(DriveState::IDLE);
@@ -81,12 +85,33 @@ void loop() {
       if (Serial.available() > 0) {
         while (Serial.available() > 0) Serial.read(); // drain the buffer
         detectedCubeColor = CubeColor::NONE;
-        setState(DriveState::DETECT_CUBE);
+        setState(DriveState::DRIVE_FORWARD);
       }
       break;
 
+    case DriveState::DRIVE_FORWARD:
+      driveForward();
+      if (timeInState() >= DRIVE_MS) {
+        stopAll();
+        setState(DriveState::TURN_RIGHT);
+      }
+      break;
+
+    case DriveState::TURN_RIGHT:
+      turnRight();
+      stopAll();
+      setState(DriveState::TURN_LEFT);
+      break;
+
+    case DriveState::TURN_LEFT:
+      turnLeft();
+      stopAll();
+      setState(DriveState::DRIVE_BACKWARD);
+      break;
+
+      
     case DriveState::DETECT_CUBE: {
-      stopAll(); // stay put while identifying the cube
+      stopAll(); // stay put
 
       PixyDetection d = pixyDetect(PixyDetectMode::SEEK_CUBE);
       if (d.found) {
@@ -100,9 +125,9 @@ void loop() {
 
     case DriveState::TURN_TO_DROPZONE: {
       if (detectedCubeColor == CubeColor::RED) {
-        driveSides(-TURN_SPEED, TURN_SPEED); // red -> turn left
+        turnLeft();
       } else if (detectedCubeColor == CubeColor::GREEN) {
-        driveSides(TURN_SPEED, -TURN_SPEED); // green -> turn right
+        turnRight();
       }
 
       if (timeInState() >= TURN_MS) {
@@ -127,25 +152,7 @@ void loop() {
       break;
     }
 
-    case DriveState::DRIVE_FORWARD: {
-      driveSides(CRUISE_SPEED, CRUISE_SPEED);  
-
-      // Pixy and Sonar is not polled
-      // Sonar itself is only polled once DRIVE_BEFORE_SONAR_MS has elapsed.
-      if (timeInState() >= DRIVE_BEFORE_SONAR_MS) {
-        float frontCm = sonarGetFrontCm();
-        Serial.print("Front distance: ");
-        Serial.println(frontCm);
-
-        // frontCm == -1 means no echo (out of range) -- must not be treated as "close"
-        if (frontCm > 0 && frontCm <= SONAR_DROPZONE_STOP_CM) {
-          stopAll();
-          setState(DriveState::DROPPING_CUBE);
-        }
-      }
-      break;
-    }
-
+    
     case DriveState::DROPPING_CUBE:
       stopAll();
       Serial.println("Cube is dropping");
@@ -156,7 +163,7 @@ void loop() {
       break;
 
     case DriveState::DRIVE_BACKWARD:
-      driveSides(-CRUISE_SPEED, -CRUISE_SPEED);
+      driveBackward();
       if (timeInState() >= BACK_MS) {
         stopAll();
         setState(DriveState::IDLE);
