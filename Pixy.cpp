@@ -8,6 +8,7 @@ static Pixy2 pixy;
 
 void pixyInit() {
   pixy.init();
+  Serial.println("Pixy Setup Complete");
 }
 
 // Returns true and fills outColor if signature `sig` is the one relevant to `mode`.
@@ -75,3 +76,7 @@ PixyDetection pixyDetect(PixyDetectMode mode) {
 
   return best;
 }
+
+// see multiple cube
+// prioritize high-points block -> green block (+3 points)
+
