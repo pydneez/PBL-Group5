@@ -35,5 +35,5 @@ struct PixyDetection {
   int16_t offsetFromCenterX;   // x - PIXY_FRAME_CENTER_X; negative = left of center, positive = right
 };
 
-void pixyDetectInit();
+void pixyInit();
 PixyDetection pixyDetect(PixyDetectMode mode);
