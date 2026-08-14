@@ -2,45 +2,93 @@
 #include <Servo.h>
 
 static Servo gripperServo;
-static GripperState state = GripperState::OPENING;
-static unsigned long stateEnteredAt = 0;
+static Servo liftServo;
+static GripperState grip_state = GripperState::OPENING;
+static LiftState lift_state = LiftState::LIFTING_UP;
+
+static unsigned long gripperStateEnteredAt = 0;
+static unsigned long liftStateEnteredAt = 0;
 
 void gripperInit() {
   gripperServo.attach(GRIPPER_SERVO_PIN);
   gripperServo.write(GRIPPER_OPEN_ANGLE);
-  state = GripperState::OPENING;
-  stateEnteredAt = millis();
+
+  grip_state = GripperState::OPENING;
+  gripperStateEnteredAt = millis();
   Serial.println("Gripper Setup Complete");
 }
 
+void liftInit() {
+  liftServo.attach(LIFT_SERVO_PIN);
+  liftServo.write(LIFT_UP_ANGLE);
+
+  lift_state = LiftState::LIFTING_UP;
+  liftStateEnteredAt = millis();
+  Serial.println("Lifter Setup Complete");
+}
+
 void gripperRequestOpen() {
-  if (state == GripperState::OPEN || state == GripperState::OPENING) return;
+  if (grip_state == GripperState::OPEN || grip_state == GripperState::OPENING) return;
   gripperServo.write(GRIPPER_OPEN_ANGLE);
-  state = GripperState::OPENING;
-  stateEnteredAt = millis();
+  grip_state = GripperState::OPENING;
+  gripperStateEnteredAt = millis();
 }
 
 void gripperRequestClose() {
-  if (state == GripperState::CLOSED || state == GripperState::CLOSING) return;
+  if (grip_state == GripperState::CLOSED || grip_state == GripperState::CLOSING) return;
   gripperServo.write(GRIPPER_CLOSE_ANGLE);
-  state = GripperState::CLOSING;
-  stateEnteredAt = millis();
+  grip_state = GripperState::CLOSING;
+  gripperStateEnteredAt = millis();
+}
+
+void liftRequestUp() {
+  if (lift_state == LiftState::LIFTED_UP || lift_state == LiftState::LIFTING_UP) return;
+  liftServo.write(LIFT_UP_ANGLE);
+  lift_state = LiftState::LIFTING_UP;
+  liftStateEnteredAt = millis();
+}
+
+void liftRequestDown() {
+  if (lift_state == LiftState::LIFTED_DOWN || lift_state == LiftState::LIFTING_DOWN) return;
+  liftServo.write(LIFT_DOWN_ANGLE);
+  lift_state = LiftState::LIFTING_DOWN;
+  liftStateEnteredAt = millis();
 }
 
 void gripperControlUpdate() {
-  if (millis() - stateEnteredAt < GRIPPER_MS) return;
+  if (millis() - gripperStateEnteredAt < GRIPPER_MS) return;
 
-  if (state == GripperState::OPENING) {
-    state = GripperState::OPEN;
-  } else if (state == GripperState::CLOSING) {
-    state = GripperState::CLOSED;
+  if (grip_state == GripperState::OPENING) {
+    grip_state = GripperState::OPEN;
+  } else if (grip_state == GripperState::CLOSING) {
+    grip_state = GripperState::CLOSED;
+  }
+}
+
+void liftControlUpdate() {
+  if (millis() - liftStateEnteredAt < LIFTER_MS) return;
+
+  if (lift_state == LiftState::LIFTING_UP) {
+    lift_state = LiftState::LIFTED_UP;
+  } else if (lift_state == LiftState::LIFTING_DOWN) {
+    lift_state = LiftState::LIFTED_DOWN;
   }
 }
 
 GripperState gripperGetState() {
-  return state;
+  return grip_state;
+}
+
+LiftState lifterGetState() {
+  return lift_state;
 }
 
 bool gripperIsSettled() {
-  return state == GripperState::OPEN || state == GripperState::CLOSED;
+  return grip_state == GripperState::OPEN || grip_state == GripperState::CLOSED;
+}
+
+// FIX: was misspelled lifteIsSettled() -- the declaration in Gripper.h had no
+// matching definition, so any call site would have failed to link.
+bool lifterIsSettled() {
+  return lift_state == LiftState::LIFTED_UP || lift_state == LiftState::LIFTED_DOWN;
 }
