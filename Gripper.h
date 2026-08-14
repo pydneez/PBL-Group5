@@ -13,9 +13,9 @@ enum class GripperState {
   CLOSED
 };
 
-// Non-blocking: commands the servo and returns immediately. No-op if
-// already open/opening (or closed/closing). Call gripperControlUpdate()
-// every loop() afterward to let the request actually settle.
+// Non-blocking: commands the servo and returns immediately.
+// No-op if already open/opening (or closed/closing). 
+// Call gripperControlUpdate() every loop() afterward to let the request actually settle.
 void gripperRequestOpen();
 void gripperRequestClose();
 
