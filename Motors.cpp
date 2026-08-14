@@ -21,6 +21,7 @@ void motorsInit() {
     pinMode(PIN_R_FRONT, OUTPUT); pinMode(PIN_R_IN1, OUTPUT); pinMode(PIN_R_IN2, OUTPUT);
     pinMode(PIN_R_REAR,  OUTPUT); pinMode(PIN_R_IN3, OUTPUT); pinMode(PIN_R_IN4, OUTPUT);
     stopAll();
+    Serial.println("Motors Setup Complete");
 }
 
 // TODO: replace with real encoder-based direction tracking once encoders are wired in.
