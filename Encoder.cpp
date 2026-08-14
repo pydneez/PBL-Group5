@@ -2,8 +2,9 @@
 
 // Single-channel sensors: 
 // a pulse just means "the wheel moved one slot", with no direction info. 
-// These ISRs only ever count magnitude; direction
-// (if needed later) has to come from what was commanded
+// These ISRs only ever count magnitude; 
+
+// direction (if needed later) has to come from what was commanded
 // e.g. encodersSetDirection() in Motors.cpp.
 
 static volatile unsigned long tickCountLF = 0;
@@ -27,6 +28,7 @@ void encoderInit() {
   attachEncoderIfWired(ENCODER_LR_PIN, isrLR);
   attachEncoderIfWired(ENCODER_RF_PIN, isrRF);
   attachEncoderIfWired(ENCODER_RR_PIN, isrRR);
+  Serial.println("Encoder Setup Complete");
 }
 
 // Ticks are written from an ISR, so reading/clearing them must happen with
