@@ -3,7 +3,7 @@
 #include "Motors.h"
 #include "Sonar.h"
 #include "Pixy.h"
-#include "Gripper.h"
+#include "Servo.h"
 #include "Encoder.h"
 #include "DriveControl.h"
 #include "IMU.h"
@@ -63,7 +63,7 @@ const char* stateName(TaskState s) {
 
     case TaskState::TURN_TO_DROPZONE: return "TURN_TO_DROPZONE";
     case TaskState::LOCATE_DROPZONE:  return "LOCATE_DROPZONE";
-    case TaskState::PICKING_UP_CUBE:    return "PICKING_UP_CUBE";
+    //case TaskState::PICKING_UP_CUBE:    return "PICKING_UP_CUBE";
     case TaskState::APPROACH_DROP_OFF: return "APPROACH_DROP_OFF";
     case TaskState::DROPPING_CUBE:    return "DROPPING_CUBE";
     
@@ -123,7 +123,9 @@ void setup() {
     if (imuInit()) {
       if (imuHasValidCalibration()) {
         Serial.println("IMU: valid calibration restored from EEPROM -- skipping calibration wait.");
-        setState(TaskState::DRIVE_FORWARD_TO_CENTER);
+        // When powered
+        //setState(TaskState::DRIVE_FORWARD_TO_CENTER);
+        setState(TaskState::IDLE);
       } else {
         setState(TaskState::IMU_CALIBRATE);
       }

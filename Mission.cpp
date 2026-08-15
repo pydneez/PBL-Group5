@@ -4,7 +4,7 @@
 #include "Encoder.h"
 #include "IMU.h"
 #include "Sonar.h"
-#include "Gripper.h"
+#include "Servo.h"
 
 
 // ---------------------------------------------------------------------------
