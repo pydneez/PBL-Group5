@@ -22,13 +22,6 @@ ImuCalibration imuGetCalibration();
 
 bool imuIsFullyCalibrated();
 
-// True once the BNO055 has known-good calibration loaded for this session --
-// either imuInit() just restored it from EEPROM, or imuSaveCalibration() has
-// since written a fresh one. False right after imuRestartCalibration() until
-// recalibrated. Meant to let a caller skip a fresh calibration wait at boot
-// when EEPROM data is already trusted (the offsets take effect the instant
-// imuInit() restores them -- this doesn't wait on the live status bits to
-// re-confirm, it just reports whether known offsets are loaded).
 bool imuHasValidCalibration();
 
 // Raw magnetic field in microtesla, unfused. Unlike imuGetHeading() (which
@@ -42,16 +35,14 @@ struct ImuVector3 {
 };
 ImuVector3 imuGetRawMagnetometer();
 
-// Writes the current sensor offsets to EEPROM (keyed by this sensor's unique
-// ID) so imuInit() can restore them on a future boot. Call once
-// imuIsFullyCalibrated() is true; no-ops after the first successful save (or
-// after imuInit() already restored offsets) so it's safe to call every loop.
 void imuSaveCalibration();
 
-// Erases the stored calibration in EEPROM and re-runs imuInit(), which
-// performs a full sensor reset -- the BNO055 comes back up uncalibrated
-// instead of restoring the old offsets, so you can redo calibration from
-// scratch. Follow up with imuSaveCalibration() once imuIsFullyCalibrated()
-// is true again to persist the new result. Returns false if the BNO055
-// isn't detected on the reset.
 bool imuRestartCalibration();
+
+// Debug-only: prints the chip's actual operating mode register and system
+// status/error registers to Serial. Unlike imuGetHeading()/imuGetCalibration()
+// (which silently read back all-zero on a failed I2C transaction), this reads
+// registers that reveal WHY: mode != NDOF means something reset/never left
+// config mode; a nonzero system error means the chip is alive and answering
+// I2C but reports an internal fault (see BNO055 datasheet 4.3.59).
+void imuPrintDiagnostics();

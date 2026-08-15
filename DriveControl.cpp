@@ -3,6 +3,7 @@
 #include "Encoder.h"
 #include "PID.h"
 #include "IMU.h"
+#include "Sonar.h"
 
 static PidController pidLF, pidLR, pidRF, pidRR;
 
@@ -56,8 +57,6 @@ void driveControlUpdate(int leftSpeed, int rightSpeed) {
   unsigned long now = millis();
 
   if (needsSeed) {
-    // Drive open-loop at the commanded speed immediately, rather than
-    // sitting at 0 for the first interval waiting on the first correction.
     outLF = leftSpeed;
     outLR = leftSpeed;
     outRF = rightSpeed;
@@ -114,6 +113,28 @@ void driveControlStop() {
   delay(DRIVE_SETTLE_MS); // let residual momentum die out before the caller starts the next move
 }
 
+bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm) {
+  float frontCm = sonarGetFrontCm();
+
+  // -1 = no echo (out of range / nothing reflecting back yet) -- keep
+  // cruising at full speed rather than misreading "no signal" as "right on
+  // top of it" (see Sonar.h).
+  if (frontCm > 0 && frontCm <= stopCm) {
+    driveControlStop();
+    return true;
+  }
+
+  int speed = cruiseSpeed;
+  if (frontCm > 0 && frontCm < SONAR_FRONT_SLOWDOWN_CM) {
+    float frac = (frontCm - stopCm) / (SONAR_FRONT_SLOWDOWN_CM - stopCm);
+    frac = constrain(frac, 0.0f, 1.0f);
+    speed = SONAR_FRONT_MIN_SPEED + (int)((cruiseSpeed - SONAR_FRONT_MIN_SPEED) * frac);
+  }
+
+  driveControlUpdateStraight(speed);
+  return false;
+}
+
 static float turnTargetHeading = 0;
 static unsigned long turnTickStartMs = 0;
 static unsigned long turnNearMs = 0;
@@ -130,6 +151,32 @@ static float turnHeadingError(float target) {
   while (error > 180.0f)  error -= 360.0f;
   while (error < -180.0f) error += 360.0f;
   return error;
+}
+
+static float straightTargetHeading = 0;
+
+void driveControlStraightStart() {
+  float heading = imuGetHeading();
+  // Nearest cardinal: e.g. 85 -> 90, but 140 -> 180 (closer to 180 than 90)
+  // -- (heading/90 + 0.5) then truncate rounds to the nearest multiple of
+  // 90 rather than always rounding down.
+  straightTargetHeading = wrap360((float)((int)(heading / 90.0f + 0.5f)) * 90.0f);
+  Serial.print("Straight heading-hold: current="); Serial.print(heading, 1);
+  Serial.print(" target="); Serial.println(straightTargetHeading, 1);
+}
+
+void driveControlUpdateStraight(int speed) {
+  // turnHeadingError() already returns the shortest signed error wrapped to
+  // -180..180 -- that's the same thing a wrap180() would give you, so a
+  // separate one isn't needed; this just reuses the turn-control math.
+  float err = turnHeadingError(straightTargetHeading);
+  int correction = constrain((int)(DRIVE_HEADING_KP * err), -DRIVE_HEADING_MAX_CORRECTION, DRIVE_HEADING_MAX_CORRECTION);
+
+  // err>0 -> target is clockwise of current heading -> nudge right (matches
+  // the err>0/turn-right convention in turnControlUpdate() below). This
+  // holds for reverse too: it's derived from (rightSpeed - leftSpeed), the
+  // actual signed wheel-velocity difference, not from the sign of `speed`.
+  driveControlUpdate(speed + correction, speed - correction);
 }
 
 // per-wheel TURN_SCALE_* multipliers
@@ -168,6 +215,7 @@ static void logImuHealth(const char* when) {
   if (cal.system == 0) {
     Serial.println("  !! IMU system calibration is 0 -- heading is not trustworthy right now (see IMU.h). Recalibrate ('c' at IDLE).");
   }
+  imuPrintDiagnostics();
 }
 
 void turnControlStart(float relativeDeg) {

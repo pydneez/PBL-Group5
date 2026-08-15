@@ -3,77 +3,76 @@
 #include <Arduino.h>
 #include "Config.h"
 
-// ============================================================================
-// HEADING REFERENCE (shared by straight driving and turning)
-//
-// desiredHeading is maintained in software and only ever changed by exact
-// increments via headingAdvance(). It is NEVER re-seeded from the sensor
-// mid-run. That matters: the old turnControlStart() did
-//     target = imuGetHeading() + relativeDeg
-// which baked each turn's settling error into the next turn's baseline, so
-// error accumulated with every turn and could never be recovered. With a
-// software reference, a turn that finishes 3 deg short leaves a 3 deg error
-// that the NEXT straight drive actively corrects, instead of becoming the new
-// definition of "straight".
-// ============================================================================
+// Per-wheel PID speed correction for straight-line driving. 
+// Not used for turning -- turns will be closed-loop against IMU heading instead,
 
-// Zeroes desiredHeading to whatever the robot is pointing at right now. Call
-// once at the start of a run -- e.g. with the robot's nose on the start tape,
-// where its true field orientation is known.
-void headingReset();
-
-// Rotates the reference by an exact amount. Positive = clockwise/right, to
-// match turnControlStart()'s convention.
-void headingAdvance(float deg);
-
-float headingGetDesired();
-
-// Shortest signed error from current heading to the reference, -180..180.
-// Positive means the robot needs to rotate clockwise to get back on target.
-float headingError();
-
-// ============================================================================
-// STRAIGHT-LINE DRIVING
-// ============================================================================
+// ticks can't tell which direction it's rotating
 
 void driveControlInit();
 
-// Call once when entering a fresh drive state. 
-// Clears odometry and the heading controller's derivative history.
+// Call once when entering a fresh DRIVE_FORWARD_TO_CENTER/DRIVE_BACKWARD state
+// Clears encoder ticks and PID history left over from whatever ran previously.
 void driveControlReset();
 
-// Call every loop() while driving straight. baseSpeed is signed: 
-// positive drives forward, negative reverses.
-//  Both sides get the same base speed; the
-// IMU heading error is applied as a differential on top of it.
+// Call every loop() while driving straight. leftSpeed/rightSpeed are signed
+// target PWM (same convention as driveSides())\
+// magnitude is corrected per-wheel against encoder ticks, sign sets direction. 
 
-// This REPLACES the old four-independent-wheel-speed PID. That version drove
-// every wheel toward a fixed tick target regardless of the commanded speed,
-// and equal wheel speed does not mean a straight path once wheel diameter,
-// slip and weight distribution differ -- which they do, or TURN_SCALE_*
-// wouldn't need to exist.
-void driveControlUpdate(int baseSpeed);
+// Internally throttles the actual PID recompute to DRIVE_PID_INTERVAL_MS;
+// every other call just re-applies the last corrected PWM so the motors keep driving continuously.
+void driveControlUpdate(int leftSpeed, int rightSpeed);
 
-// Distance travelled since the last driveControlReset(), in cm, averaged over
-// all four wheels. Magnitude only: the single-channel encoders can't tell
-// forward from backward, so reversing also increases this.
-// Requires DRIVE_TICKS_PER_CM to be measured -- see DRIVE_CALIBRATE.
-float driveControlDistanceCm();
-
-// Ramps all four wheels down to 0 over DRIVE_DECEL_MS, then holds for
-// DRIVE_SETTLE_MS so residual momentum dies out. Still blocking (~550 ms) --
-// call it at the END of a drive state, never in the emergency stop path.
+// Ramps all four wheels down to 0 from whatever they were last commanded to,
+// over DRIVE_DECEL_MS, instead of cutting power in one step like stopAll()
+// does -- an instant full-speed-to-zero stop jolts the chassis. Then holds
+// at 0 for DRIVE_SETTLE_MS so residual momentum/coasting actually dies out
+// before returning, so the caller's next move (e.g. reversing direction)
+// starts from a genuinely stationary robot. Call this instead of stopAll()
+// when ending a DRIVE_FORWARD_TO_CENTER/DRIVE_BACKWARD run. Blocking, but short
+// (DRIVE_DECEL_MS + DRIVE_SETTLE_MS at most) -- not for the emergency stop
+// path, which needs to stay instant.
 void driveControlStop();
 
-// ============================================================================
-// TURNING (closed-loop against the shared heading reference)
-// ============================================================================
+// Drives straight ahead (via driveControlUpdate) while polling the front
+// sonar every call. Linearly eases speed down from cruiseSpeed toward
+// SONAR_FRONT_MIN_SPEED as the front distance closes in on stopCm (see
+// SONAR_FRONT_SLOWDOWN_CM in Config.h), so the robot arrives at the wall/
+// belt slowing down instead of hitting it at full speed. A -1 reading (no
+// echo -- out of range / nothing ahead yet, see Sonar.h) is treated as
+// "keep cruising", not "extremely close".
+//
+// Call every loop() once sonar polling should be active. Returns true the
+// moment the front distance is within stopCm -- driveControlStop() has
+// already been called internally when that happens, so the caller just
+// needs to transition state.
+bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm);
 
-// Call once when entering a fresh turn state. relativeDeg is signed:
-// positive turns right/clockwise, negative turns left/counter-clockwise.
+// Call once when entering a fresh straight-driving state (alongside
+// driveControlReset()). Latches the heading-hold target to whichever
+// cardinal (0/90/180/270) the robot's current IMU heading is closest to --
+// snapped ONCE here rather than every loop() tick, so noise near a 45 deg
+// boundary can't flip-flop the target mid-drive. This is what lets the
+// robot straighten itself onto a clean cardinal even when it was placed a
+// few degrees off (e.g. at 85 deg it latches 90, then corrects toward it).
+void driveControlStraightStart();
+
+// Drives straight at `speed` (signed, same convention as driveControlUpdate)
+// while biasing the two wheel-side targets to correct back toward the
+// heading latched by driveControlStraightStart() -- layered on top of, not
+// instead of, the per-wheel encoder PID already in driveControlUpdate().
+void driveControlUpdateStraight(int speed);
+
+// Closed-loop turning against IMU heading (see the comment above: turns
+// don't use encoder ticks since a single-channel encoder can't tell which
+// direction it's rotating).
+
+// Call once when entering a fresh turn state. relativeDeg is signed and
+// relative to the current heading -- positive turns right/clockwise,
+// negative turns left/counter-clockwise (e.g. +90 or -90 for a quarter turn).
 void turnControlStart(float relativeDeg);
 
 // Call every loop() while turning; pwm is the max turn speed (ramped down
-// near the target). Returns true once the turn is done -- see Config.h's
-// TURN_* constants -- and stops the motors.
+// near the target). Returns true once the turn is done (within tolerance,
+// settled, or timed out -- see Config.h's TURN_* constants) and stops the
+// motors.
 bool turnControlUpdate(int pwm);

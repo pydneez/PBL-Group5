@@ -2,7 +2,6 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BNO055.h>
-#include <utility/imumaths.h>
 #include <EEPROM.h>
 
 static Adafruit_BNO055 bno(BNO055_SENSOR_ID, BNO055_I2C_ADDR, &Wire);
@@ -10,7 +9,7 @@ static Adafruit_BNO055 bno(BNO055_SENSOR_ID, BNO055_I2C_ADDR, &Wire);
 // True once this session's offsets are known-good in EEPROM, either because
 // imuInit() just restored them or imuSaveCalibration() just wrote them --
 // either way there's nothing left to save.
-static bool calibrationSavedThisSession = false;
+static bool calibrationSavedThisSession = true;
 
 bool imuInit() {
   if (!bno.begin(OPERATION_MODE_NDOF)) {
@@ -37,20 +36,14 @@ bool imuInit() {
   }
 
   // Crystal must be configured AFTER loading calibration data into the BNO055.
-  bno.setExtCrystalUse(true);
+  //bno.setExtCrystalUse(true);
   return true;
 }
 
 float imuGetHeading() {
-  // VECTOR_EULER: x = heading, y = roll, z = pitch. Only heading is exposed
-  // here since that's all turning/driving needs; roll/pitch are available
-  // the same way if needed later.
-  imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
-  Serial.print("Heading: "); Serial.println(euler.x());
-  Serial.print("Roll:    "); Serial.println(euler.y());
-  Serial.print("Pitch:   "); Serial.println(euler.z());
-  return euler.x();
-  
+  sensors_event_t event;
+  bno.getEvent(&event, Adafruit_BNO055::VECTOR_EULER);
+  return event.orientation.x;
 }
 
 ImuCalibration imuGetCalibration() {
@@ -68,8 +61,9 @@ bool imuHasValidCalibration() {
 }
 
 ImuVector3 imuGetRawMagnetometer() {
-  imu::Vector<3> mag = bno.getVector(Adafruit_BNO055::VECTOR_MAGNETOMETER);
-  return { (float)mag.x(), (float)mag.y(), (float)mag.z() };
+  sensors_event_t event;
+  bno.getEvent(&event, Adafruit_BNO055::VECTOR_MAGNETOMETER);
+  return { event.magnetic.x, event.magnetic.y, event.magnetic.z };
 }
 
 void imuSaveCalibration() {
@@ -95,6 +89,16 @@ void imuSaveCalibration() {
 
   calibrationSavedThisSession = true;
   Serial.println("IMU: calibration saved to EEPROM.");
+}
+
+void imuPrintDiagnostics() {
+  uint8_t mode = bno.getMode();
+  uint8_t sysStatus, selfTest, sysError;
+  bno.getSystemStatus(&sysStatus, &selfTest, &sysError);
+  Serial.print("  IMU diag: mode=0x"); Serial.print(mode, HEX);
+  Serial.print(" (NDOF=0x0C)  sysStatus="); Serial.print(sysStatus);
+  Serial.print(" selfTest=0x"); Serial.print(selfTest, HEX);
+  Serial.print(" sysError="); Serial.println(sysError);
 }
 
 bool imuRestartCalibration() {

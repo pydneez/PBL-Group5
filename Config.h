@@ -16,11 +16,18 @@
 #define PIN_R_REAR  7    // right rear speed (PWM)
 
 // ---------------- TIMING / SPEED ----------------
-#define DRIVE_MS    1800   // how long to drive forward
-#define TURN_MS     1000   // unused now that turns are closed-loop against IMU heading (see TURN_* below)
-#define BACK_MS     1800   // how long to reverse
-#define CRUISE_SPEED 240
-#define TURN_SPEED   220
+// Safety-net max drive time for DRIVE_FORWARD_TO_CENTER -- the sonar (see
+// SONAR_DROPZONE_STOP_CM / DRIVE_BEFORE_SONAR_MS below) is what actually
+// stops the robot; this just keeps a stuck/failed sonar reading from driving
+// forever. Must stay well above DRIVE_BEFORE_SONAR_MS or the timeout fires
+// before sonar polling even starts. Was 900ms when this was purely a
+// fixed-time drive -- retune down once the real distance-to-wall is known.
+#define DRIVE_MS    900 // beore it was 900 until the center
+#define TURN_MS     800   // unused now that turns are closed-loop against IMU heading (see TURN_* below)
+#define BACK_MS     1500   // how long to reverse
+#define CRUISE_SPEED 180
+#define APPROACH_SPEED 10
+#define TURN_SPEED   100
 
 // Number of forward/backward round trips the DRIVE_FORWARD_TO_CENTER<->DRIVE_BACKWARD
 // PID calibration shuttle runs before returning to IDLE. 
@@ -60,27 +67,33 @@
 // ---------------- SONAR / ULTRASONIC ----------------
 #define TRIG_FRONT 38
 #define ECHO_FRONT 39
-#define TRIG_LEFT 49
-#define ECHO_LEFT 48
-#define TRIG_RIGHT 45   
-#define ECHO_RIGHT 44  
+#define TRIG_LEFT 46
+#define ECHO_LEFT 47
+#define TRIG_RIGHT 44   
+#define ECHO_RIGHT 45  
 
 // Front distance (cm) at which the robot is close enough to the drop-off wall
 #define SONAR_DROPZONE_STOP_CM  15
-#define SONAR_BELT_STOP_CM  3
+#define SONAR_BELT_STOP_CM  7
+#define SONAR_BELT_RIGHT_SONAR_CM  28
+
+// Front distance (cm) at which driveControlCruiseToSonarStop() starts
+// easing off CRUISE_SPEED toward SONAR_FRONT_MIN_SPEED, so the robot
+// arrives at its stop threshold (wall or belt) slowing down instead of
+// hitting it at full speed.
+#define SONAR_FRONT_SLOWDOWN_CM  20
+
+// Floor PWM while cruising down close to an obstacle -- keeps enough drive
+// torque (and encoder ticks for the straight-line PID) right up to the stop
+// threshold instead of trailing off to a crawl.
+#define SONAR_FRONT_MIN_SPEED    2
 
 // Measured side clearance (cm) when the robot is centered in the drop-off wall
 #define SONAR_SIDE_CENTER_CM    25
 
-// How long LOCATE_DROPZONE keeps polling Pixy for the matching drop-off marker
-// before giving up. On timeout it currently bails to IDLE -- once the turn
-// states stop chaining into each other, point this at a 180 instead so a
-// wrong-way turn can recover on its own.
-#define LOCATE_DROPZONE_TIMEOUT_MS 3000
-
 // Placeholder: how long to drive straight (open-loop, no PID yet) before the
 // front sonar starts being polled. Retune once PID/speed is characterized.
-#define DRIVE_BEFORE_SONAR_MS  2000
+#define DRIVE_BEFORE_SONAR_MS  500
 
 // ---------------- ENCODERS (LM393 IR slot sensor, single-channel) ----------------
 // must be attachInterrupt()-capable on your board (e.g. on a Mega2560: 2, 3, 18, 19, 20, 21)
@@ -113,6 +126,19 @@
 // Correction is clamped to +/- this many PWM units so one noisy reading
 // can't slam a wheel's speed to 0 or 255.
 #define DRIVE_PID_MAX_CORRECTION 50
+
+// Heading-hold gain for driveControlUpdateStraight() -- differential PWM
+// bias per degree of error from the cardinal heading latched at the start
+// of the straight leg (see driveControlStraightStart()). Deliberately
+// small: too high fights the per-wheel encoder PID above and turns a gentle
+// self-correction into a zig-zag. Start low and raise only if the robot
+// isn't visibly correcting back toward the cardinal heading.
+#define DRIVE_HEADING_KP 3.0f
+
+// Heading-hold correction is clamped to +/- this many PWM units, same
+// reasoning as DRIVE_PID_MAX_CORRECTION -- one noisy heading reading can't
+// suddenly swing a wheel's target speed.
+#define DRIVE_HEADING_MAX_CORRECTION 40
 
 // How long driveControlStop() takes to ramp PWM down to 0 (in this many
 // steps), instead of cutting power in one step -- smooths the jolt/bounce a
@@ -151,11 +177,18 @@
 
 // Hovering within TURN_HEADING_TOLERANCE_DEG*2.5 for this long also counts as
 // done, so small oscillation around the target doesn't stall a turn forever.
-#define TURN_NEAR_MS 400
+#define TURN_NEAR_MS 200
 
 // Safety net: a turn is accepted as done after this long regardless of error,
 // so a stuck/miscalibrated turn can't hang the state machine.
-#define TURN_TIMEOUT_MS 1000
+//
+// Was 1000, but at TURN_SPEED=100 a 90deg turn genuinely needs most of that
+// window just to travel the distance -- measured ending in a stall 5.4deg
+// short of tolerance (see TURN_PWM_FLOOR), with the timeout firing before it
+// could finish converging rather than because it was actually stuck. Raised
+// to give real convergence a chance to complete before the safety net cuts
+// it off.
+#define TURN_TIMEOUT_MS 1400
 
 // PWM floor applied while ramping down near the target, so friction can't
 // stall the turn before it reaches tolerance.
@@ -166,12 +199,19 @@
 // eventually hitting TURN_TIMEOUT_MS instead of ever reaching tolerance --
 // not a startup/breakaway issue (the kick phase clearly worked; ticks were
 // healthy for the first ~1.3s), just insufficient torque to sustain motion
-// at that PWM under real load. Raised to CRUISE_SPEED's known-good value as
-// a starting point. Trade-off: a higher floor means more speed left when
-// the tolerance check fires, so this will likely increase coast/overshoot
-// again (the thing TURN_RAMP_SPAN_DEG was tuned to reduce) -- reliability
-// over precision until turns reliably complete, then revisit.
-#define TURN_PWM_FLOOR 150
+// at that PWM under real load. Was then raised to 150 when TURN_SPEED was
+// still 200, which worked as a floor (below cruise). But TURN_SPEED has
+// since dropped to 100 and this wasn't revisited -- at 150 the "floor" was
+// actually 50% ABOVE cruise speed, so the ramp zone sped the turn up right
+// before the tolerance check instead of slowing it down, guaranteeing an
+// overshoot (measured: 90deg turn overshot to 131.6deg before timing out).
+// Dropped back below TURN_SPEED so the ramp is a real deceleration again --
+// but 70 turned out to be back in the stalling range documented above
+// (measured: RR ticks hit 0, LR near 0, heading went flat/no-coast in the
+// settle trace, and the turn only ended via TURN_TIMEOUT_MS, not tolerance).
+// Split the difference between "stalls" (<=80) and "too fast to decelerate"
+// (>=TURN_SPEED=100).
+#define TURN_PWM_FLOOR 70
 
 // Degrees of remaining error at which PWM starts ramping down toward
 // TURN_PWM_FLOOR. Deliberately NOT derived from TURN_HEADING_TOLERANCE_DEG
@@ -180,6 +220,16 @@
 // -- measured as a consistent ~5.5deg coast-through-stop overshoot). Wider
 // span here means it's already slow well before the tolerance check, so
 // physical momentum has less speed left to carry it past target.
+//
+// Was widened to 45 then narrowed back to 20 -- at 20, PWM stays pinned at
+// TURN_PWM_FLOOR=70 for only the last ~14deg (100*dist/20 < 70 below that),
+// leaving the ~70+ preceding degrees at full 100 PWM cruise with no
+// deceleration at all. Not enough runway to shed that momentum, so it
+// coasted through the tolerance window and had to reverse/correct back
+// (measured: overshoot on the first swing, then a readjust pass). 30 splits
+// the difference between that and the 45 which risked stalling at the old
+// floor=90 -- watch tick counts on retest for the stall signature (any
+// wheel dropping to 0) if this still isn't enough runway.
 #define TURN_RAMP_SPAN_DEG 30
 
 // Per-wheel PWM multiplier applied ONLY during turning (driveSides()/
@@ -215,8 +265,13 @@
 // weight imbalance would affect at most 2 wheels, not all 4). Backed off to
 // something still above TURN_SPEED but well short of max while this is
 // being diagnosed -- lower further if the stall persists.
-#define TURN_KICK_MS 250
-#define TURN_KICK_PWM 210
+//
+// Was 200 against TURN_SPEED=200, i.e. no burst at all above cruise. Once
+// TURN_SPEED dropped to 100 this became a 2x burst that was never re-tuned,
+// adding to the overshoot alongside TURN_PWM_FLOOR (see that comment).
+// Halved to stay a real-but-smaller burst above the new cruise speed.
+#define TURN_KICK_MS 160
+#define TURN_KICK_PWM 130
 
 // Once a turn reaches tolerance, motors cut immediately (unlike
 // driveControlStop()'s ramp) -- a turn's target IS the angle, so continuing
@@ -250,14 +305,13 @@
 
 #define PIN_NOT_WIRED -1
 
-// ---------------- EMERGENCY STOP ----------------
-// Wire a normally-open bumper switch between this pin and GND. The pin is
-// configured INPUT_PULLUP in setup(), so unpressed (or unwired) reads HIGH
-// and pressed reads LOW.
-#define EMERGENCY_STOP_PIN A0
-
 // ---------------- TORQUE SERVO (MG996R) ----------------
 #define LIFT_SERVO_PIN 35
 #define LIFT_UP_ANGLE 106
 #define LIFT_DOWN_ANGLE 17
 #define LIFTER_MS  500
+
+// Placeholder: how long to hold each gripper state so the servo has time to
+// physically reach the commanded angle before the state machine moves on.
+#define GRIPPER_MS  500
+
