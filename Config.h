@@ -307,11 +307,8 @@
 
 // ---------------- TORQUE SERVO (MG996R) ----------------
 #define LIFT_SERVO_PIN 35
-#define LIFT_UP_ANGLE 106
-#define LIFT_DOWN_ANGLE 17
+#define LIFT_UP_ANGLE 180
+#define LIFT_DOWN_ANGLE 0
 #define LIFTER_MS  500
 
-// Placeholder: how long to hold each gripper state so the servo has time to
-// physically reach the commanded angle before the state machine moves on.
-#define GRIPPER_MS  500
 

@@ -3,7 +3,7 @@
 #include "Motors.h"
 #include "Sonar.h"
 #include "Pixy.h"
-#include "Servo.h"
+#include "Actuator.h"
 #include "Encoder.h"
 #include "DriveControl.h"
 #include "IMU.h"
@@ -25,6 +25,8 @@ enum class TaskState {
   TURN_180,
   GRIPPER_OPEN,
   GRIPPER_CLOSE,
+  LIFT_UP,
+  LIFT_DOWN,
   ENCODER_TEST,
   TURN_TEST,
   DRIVE_PID_TEST,    // forward 2000ms, backward 2000ms, once -- re-baseline DRIVE_PID_TARGET_TICKS_PER_INTERVAL after a weight change
@@ -63,12 +65,13 @@ const char* stateName(TaskState s) {
 
     case TaskState::TURN_TO_DROPZONE: return "TURN_TO_DROPZONE";
     case TaskState::LOCATE_DROPZONE:  return "LOCATE_DROPZONE";
-    //case TaskState::PICKING_UP_CUBE:    return "PICKING_UP_CUBE";
     case TaskState::APPROACH_DROP_OFF: return "APPROACH_DROP_OFF";
     case TaskState::DROPPING_CUBE:    return "DROPPING_CUBE";
     
     case TaskState::GRIPPER_OPEN: return "GRIPPER_OPEN";
     case TaskState::GRIPPER_CLOSE: return "GRIPPER_CLOSE";
+    case TaskState::LIFT_UP: return "LIFT_UP";
+    case TaskState::LIFT_DOWN: return "LIFT_DOWN";
 
     case TaskState::ENCODER_TEST: return "ENCODER_TEST";
     case TaskState::TURN_TEST: return "TURN_TEST";
@@ -194,7 +197,8 @@ void loop() {
         } else if (c == 'b' || c == 'B') {
           setState(TaskState::DRIVE_BACKWARD);
         } else if (c == 'g' || c == 'G') {
-          setState(TaskState::GRIPPER_CLOSE);
+          // Runs the full pickup cycle: lift down -> grab -> lift up -> release.
+          setState(TaskState::LIFT_DOWN);
         } else if (c == 'i' || c == 'I') {
           setState(TaskState::IDLE);
         } else if (c == 'p' || c == 'P') {
@@ -271,8 +275,9 @@ void loop() {
       bool reachedBelt = driveControlCruiseToSonarStop(APPROACH_SPEED, SONAR_BELT_STOP_CM);
 
       if (reachedBelt) {
-        // TODO: hand off to the belt-measurement/grab state once it exists;
-        setState(TaskState::IDLE);
+        // Cube pickup: lift down -> grab -> lift up -> release into the
+        // carrier (see LIFT_DOWN/GRIPPER_CLOSE/LIFT_UP/GRIPPER_OPEN chain).
+        setState(TaskState::LIFT_DOWN);
       }
       break;
     }
@@ -328,13 +333,35 @@ void loop() {
         lastEnteredAt = stateEnteredAt;
         gripperRequestClose();
       }
-      delay(2000);
       if (gripperIsSettled()) {
+        setState(TaskState::LIFT_UP);
+      }
+      break;
+    }
+    
+    case TaskState::LIFT_UP: {
+      static unsigned long lastEnteredAt = 0;
+      if (stateEnteredAt != lastEnteredAt) {
+        lastEnteredAt = stateEnteredAt;
+        liftRequestUp();
+      }
+      if (lifterIsSettled()) {
         setState(TaskState::GRIPPER_OPEN);
       }
       break;
     }
 
+    case TaskState::LIFT_DOWN: {
+      static unsigned long lastEnteredAt = 0;
+      if (stateEnteredAt != lastEnteredAt) {
+        lastEnteredAt = stateEnteredAt;
+        liftRequestDown();
+      }
+      if (lifterIsSettled()) {
+        setState(TaskState::GRIPPER_CLOSE);
+      }
+      break;
+    }
 
 
     case TaskState::TURN_TO_DROPZONE: {
@@ -460,6 +487,7 @@ void loop() {
   // open/close started in one state (e.g. DROPPING_CUBE) keeps progressing
   // even after the robot has moved on to driving/turning.
   gripperControlUpdate();
+  liftControlUpdate();
 
   // Add an emergency stop that works from ANY TaskState:
   if (digitalRead(A0) == HIGH) {   // example: a bumper switch on A0
