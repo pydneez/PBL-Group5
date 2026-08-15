@@ -5,7 +5,7 @@ static Servo gripperServo;
 static Servo liftServo;
 static GripperState grip_state = GripperState::OPENING;
 static LiftState lift_state = LiftState::LIFTING_UP;
-static unsigned long gripState  EnteredAt = 0;
+static unsigned long gripStateEnteredAt = 0;
 static unsigned long liftStateEnteredAt = 0;
 
 void gripperInit() {

@@ -300,15 +300,16 @@
 // ---------------- GRIPPER SERVO (MG90) ----------------
 #define GRIPPER_SERVO_PIN 34
 #define GRIPPER_OPEN_ANGLE   180 // original position dont change!!!!!
-#define GRIPPER_CLOSE_ANGLE  110 
-#define GRIPPER_MS  500
+#define GRIPPER_CLOSE_ANGLE  75
+#define GRIPPER_MS  1185
+
+// Derived, not tuned directly -- see GRIPPER_SERVO_MS_PER_DEG above.
+// #define GRIPPER_MS  ((GRIPPER_OPEN_ANGLE - GRIPPER_CLOSE_ANGLE) * GRIPPER_SERVO_MS_PER_DEG + SERVO_SETTLE_MARGIN_MS)
 
 #define PIN_NOT_WIRED -1
 
 // ---------------- TORQUE SERVO (MG996R) ----------------
 #define LIFT_SERVO_PIN 35
-#define LIFT_UP_ANGLE 180
+#define LIFT_UP_ANGLE 200
 #define LIFT_DOWN_ANGLE 0
-#define LIFTER_MS  500
-
-
+#define LIFTER_MS 850
