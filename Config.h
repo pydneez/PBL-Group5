@@ -1,16 +1,16 @@
 #pragma once
 
 // ---------------- MOTOR PINS ----------------
-#define PIN_L_IN1  29   // left front direction
-#define PIN_L_IN2  28
-#define PIN_L_IN3  27   // left rear direction
+#define PIN_L_IN1  28   // left front direction 
+#define PIN_L_IN2  29
+#define PIN_L_IN3  27   // left rear direction 
 #define PIN_L_IN4  26
 #define PIN_L_FRONT  8    // left front speed (PWM)
 #define PIN_L_REAR  9     // left rear speed (PWM)
 
-#define PIN_R_IN1  32   // right front direction
+#define PIN_R_IN1  32   // right front direction -- swapped
 #define PIN_R_IN2  33
-#define PIN_R_IN3  30   // right rear direction
+#define PIN_R_IN3  30   // right rear direction 
 #define PIN_R_IN4  31
 #define PIN_R_FRONT  6    // right front speed (PWM)
 #define PIN_R_REAR  7    // right rear speed (PWM)
