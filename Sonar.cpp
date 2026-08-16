@@ -1,21 +1,58 @@
 #include "Sonar.h"
 
-// --- Global Timing & State Variables ---
-unsigned long lastSensorTriggerTime = 0;
-const long SENSOR_CYCLE_INTERVAL = 45; // 45ms between sensors to prevent cross-talk echo
-int activeSensorIndex = 0;             // 0 = Front, 1 = Left, 2 = Right
+// --- Front sonar: dedicated, throttled, pulseIn()-based ---
+// pulseIn() blocks for the duration of the actual echo pulse (bounded by
+// FRONT_ECHO_TIMEOUT_US below), but that's a feature here, not a bug: at
+// close range the echo pulse is only a few hundred microseconds wide (e.g.
+// ~400us at 7cm, ~120us at 2cm) -- too short to reliably catch by polling
+// digitalRead() from the main loop in between other blocking work (e.g. the
+// BNO055 I2C read every APPROACH_BELT iteration). pulseIn() busy-waits
+// internally so it can't miss the edges. Front is what the collision-stop
+// logic depends on, so reliability here matters more than staying
+// non-blocking; FRONT_PING_INTERVAL_MS keeps the blocking bounded and
+// infrequent. Behavior confirmed against a standalone bench test
+// (test_sonar_wall.ino) before porting in here.
+static unsigned long lastFrontPingAt = 0;
+static const long FRONT_PING_INTERVAL_MS = 60;
+static const unsigned long FRONT_ECHO_TIMEOUT_US = 15000; // ~257cm max range
+static float cachedDistFront = -1;
 
-// Temporary state capture variables
-volatile unsigned long pulseStartTime = 0;
-volatile bool waitingForEcho = false;
+static void pingFront() {
+  digitalWrite(TRIG_FRONT, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_FRONT, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_FRONT, LOW);
 
-// Cached global distances returned instantly when requested
-volatile float cachedDistFront = -1;
-volatile float cachedDistLeft  = -1;
-volatile float cachedDistRight = -1;
+  unsigned long duration = pulseIn(ECHO_FRONT, HIGH, FRONT_ECHO_TIMEOUT_US);
+  cachedDistFront = (duration > 0) ? (duration * 0.0343f / 2.0f) : -1;
+}
 
-// Private helper to send a physical trigger pulse to the ultrasonic sensor
-void triggerPhysicalPulse(int trigPin) {
+float sonarGetFrontCm() {
+  unsigned long now = millis();
+  if (now - lastFrontPingAt >= FRONT_PING_INTERVAL_MS) {
+    lastFrontPingAt = now;
+    pingFront();
+  }
+  return cachedDistFront;
+}
+
+// --- Left/right sonar: unchanged non-blocking round-robin state machine ---
+// Neither is on the collision-stop path (used for side clearance/centering
+// instead), so the missed-short-pulse-at-close-range tradeoff that front
+// had doesn't bite the same way here, and there's no need to pay pulseIn()'s
+// blocking cost for two more sensors every cycle.
+static unsigned long lastSensorTriggerTime = 0;
+static const long SENSOR_CYCLE_INTERVAL = 45; // ms between sensors to prevent cross-talk echo
+static int activeSensorIndex = 0;             // 0 = Left, 1 = Right
+
+static volatile unsigned long pulseStartTime = 0;
+static volatile bool waitingForEcho = false;
+
+static volatile float cachedDistLeft  = -1;
+static volatile float cachedDistRight = -1;
+
+static void triggerPhysicalPulse(int trigPin) {
   digitalWrite(trigPin, LOW);
   delayMicroseconds(2);
   digitalWrite(trigPin, HIGH);
@@ -25,55 +62,45 @@ void triggerPhysicalPulse(int trigPin) {
   waitingForEcho = true; // Open the window for reading the echo
 }
 
-// Private helper that drives the non-blocking state machine background tasks
-void updateSonarStateMachine() {
+static void updateSideSonarStateMachine() {
   unsigned long currentTime = millis();
 
   // 1. Check if the active sensor timed out waiting for an echo (30ms timeout)
   if (waitingForEcho && (micros() - pulseStartTime > 30000) && pulseStartTime != 0) {
     waitingForEcho = false;
-    if (activeSensorIndex == 0)      cachedDistFront = -1;
-    else if (activeSensorIndex == 1) cachedDistLeft  = -1;
-    else if (activeSensorIndex == 2) cachedDistRight = -1;
+    if (activeSensorIndex == 0) cachedDistLeft  = -1;
+    else                        cachedDistRight = -1;
   }
 
   // 2. Time to advance to and trigger the next sensor in the loop sequence
   if (currentTime - lastSensorTriggerTime >= SENSOR_CYCLE_INTERVAL) {
     lastSensorTriggerTime = currentTime;
-    
-    // Increment through 0 (Front), 1 (Left), 2 (Right)
-    activeSensorIndex = (activeSensorIndex + 1) % 3;
-    waitingForEcho = false; 
 
-    if (activeSensorIndex == 0)      triggerPhysicalPulse(TRIG_FRONT);
-    else if (activeSensorIndex == 1) triggerPhysicalPulse(TRIG_LEFT);
-    else if (activeSensorIndex == 2) triggerPhysicalPulse(TRIG_RIGHT);
+    activeSensorIndex = (activeSensorIndex + 1) % 2;
+    waitingForEcho = false;
+
+    if (activeSensorIndex == 0) triggerPhysicalPulse(TRIG_LEFT);
+    else                        triggerPhysicalPulse(TRIG_RIGHT);
   }
 
-  // 3. Keep updating the live echoes instantly without blocking the microcontroller execution
-  int currentEchoPin = (activeSensorIndex == 0) ? ECHO_FRONT : ((activeSensorIndex == 1) ? ECHO_LEFT : ECHO_RIGHT);
-  
+  // 3. Keep updating the live echo instantly without blocking
+  int currentEchoPin = (activeSensorIndex == 0) ? ECHO_LEFT : ECHO_RIGHT;
+
   if (waitingForEcho) {
-    // If the pulse hasn't started tracking yet, watch for the pin to go HIGH
     if (pulseStartTime == 0 && digitalRead(currentEchoPin) == HIGH) {
       pulseStartTime = micros();
-    } 
-    // If it started tracking and now dropped to LOW, the echo has successfully returned!
-    else if (pulseStartTime != 0 && digitalRead(currentEchoPin) == LOW) {
+    } else if (pulseStartTime != 0 && digitalRead(currentEchoPin) == LOW) {
       long duration = micros() - pulseStartTime;
       float calculatedDistance = duration * 0.0343 / 2.0;
-      
-      // Filter out any invalid sensor artifacts or extreme out of bounds readings
+
       if (calculatedDistance > 450.0 || calculatedDistance <= 0) {
-        calculatedDistance = -1; 
+        calculatedDistance = -1;
       }
 
-      // Save the freshly calculated distance into our cached global repository
-      if (activeSensorIndex == 0)      cachedDistFront = calculatedDistance;
-      else if (activeSensorIndex == 1) cachedDistLeft  = calculatedDistance;
-      else if (activeSensorIndex == 2) cachedDistRight = calculatedDistance;
+      if (activeSensorIndex == 0) cachedDistLeft  = calculatedDistance;
+      else                        cachedDistRight = calculatedDistance;
 
-      waitingForEcho = false; // Transaction complete
+      waitingForEcho = false;
     }
   }
 }
@@ -87,31 +114,25 @@ void sonarInit() {
 
   pinMode(TRIG_RIGHT, OUTPUT);
   pinMode(ECHO_RIGHT, INPUT);
-  
-  Serial.println("Non-Blocking Sonar Setup Complete");
+
+  Serial.println("Sonar Setup Complete (front: blocking pulseIn, left/right: non-blocking)");
 }
 
-// These functions now seamlessly return the last known value instantly (0ms block)
-float sonarGetFrontCm() { 
-  updateSonarStateMachine();
-  return cachedDistFront; 
+float sonarGetLeftCm()  {
+  updateSideSonarStateMachine();
+  return cachedDistLeft;
 }
 
-float sonarGetLeftCm()  { 
-  updateSonarStateMachine();
-  return cachedDistLeft; 
-}
-
-float sonarGetRightCm() { 
-  updateSonarStateMachine();
-  return cachedDistRight; 
+float sonarGetRightCm() {
+  updateSideSonarStateMachine();
+  return cachedDistRight;
 }
 
 // Retained to preserve header matching compilation hooks cleanly
 float sonarGetDistanceCm(int trigPin, int echoPin) {
-  updateSonarStateMachine();
-  if (trigPin == TRIG_FRONT) return cachedDistFront;
-  if (trigPin == TRIG_LEFT)  return cachedDistLeft;
-  if (trigPin == TRIG_RIGHT) return cachedDistRight;
+  (void)echoPin;
+  if (trigPin == TRIG_FRONT) return sonarGetFrontCm();
+  if (trigPin == TRIG_LEFT)  return sonarGetLeftCm();
+  if (trigPin == TRIG_RIGHT) return sonarGetRightCm();
   return -1;
 }

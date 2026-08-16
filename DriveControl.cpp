@@ -14,6 +14,15 @@ static bool needsSeed = true;
 // motors keep driving continuously instead of only moving on update ticks.
 static int outLF = 0, outLR = 0, outRF = 0, outRR = 0;
 
+// Last valid (non -1) front sonar reading seen during the current approach --
+// see driveControlCruiseToSonarStop()'s -1 handling below.
+static float lastValidFrontCm = -1;
+
+// millis() timestamp the front distance most recently entered the
+// +/-SONAR_DEADBAND window, or 0 if it isn't currently inside it -- see the
+// hold-and-recheck logic in driveControlCruiseToSonarStop().
+static unsigned long deadbandEnteredAt = 0;
+
 void driveControlInit() {
   pidInit(pidLF, DRIVE_PID_KP, DRIVE_PID_KI, DRIVE_PID_KD, -DRIVE_PID_MAX_CORRECTION, DRIVE_PID_MAX_CORRECTION);
   pidInit(pidLR, DRIVE_PID_KP, DRIVE_PID_KI, DRIVE_PID_KD, -DRIVE_PID_MAX_CORRECTION, DRIVE_PID_MAX_CORRECTION);
@@ -28,6 +37,8 @@ void driveControlReset() {
   pidReset(pidRF);
   pidReset(pidRR);
   needsSeed = true;
+  lastValidFrontCm = -1;
+  deadbandEnteredAt = 0;
 }
 
 // Flags a wheel reporting well under what the other three see -- a real PID
@@ -48,6 +59,15 @@ static void flagIfOutlier(const char* label, unsigned long ticks, unsigned long 
 // baseSpeed's sign is reapplied to the corrected magnitude on the way out.
 static int correctWheel(PidController& pid, unsigned long ticks, int baseSpeed, float dtSeconds) {
   if (baseSpeed == 0) return 0;
+
+  if (abs(baseSpeed) < DRIVE_PID_MIN_SPEED_FOR_CORRECTION) {
+    // Too slow for the tick-rate PID to mean anything -- drive open-loop
+    // and keep the controller reset so it doesn't kick when speed climbs
+    // back above the threshold (see Config.h).
+    pidReset(pid);
+    return baseSpeed;
+  }
+
   float correction = pidCompute(pid, DRIVE_PID_TARGET_TICKS_PER_INTERVAL, (float)ticks, dtSeconds);
   int magnitude = constrain(abs(baseSpeed) + (int)correction, 0, 255);
   return (baseSpeed > 0) ? magnitude : -magnitude;
@@ -113,25 +133,60 @@ void driveControlStop() {
   delay(DRIVE_SETTLE_MS); // let residual momentum die out before the caller starts the next move
 }
 
-bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm) {
+bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm, float slowCm) {
   float frontCm = sonarGetFrontCm();
 
-  // -1 = no echo (out of range / nothing reflecting back yet) -- keep
-  // cruising at full speed rather than misreading "no signal" as "right on
-  // top of it" (see Sonar.h).
-  if (frontCm > 0 && frontCm <= stopCm) {
+  if (frontCm > 0) {
+    lastValidFrontCm = frontCm;
+  } else {
+    // No echo this cycle. If we've never seen the wall inside slowCm yet,
+    // there's genuinely nothing confirmed ahead -- keep cruising. Once we
+    // HAVE been inside slowCm, treat a dropped reading as "close and
+    // unsure" and hold at the floor speed instead of assuming it's clear
+    // (a flaky close-range echo defaulting to "clear" is what let the
+    // approach slam into the wall at full speed before).
+    bool wasClose = (lastValidFrontCm > 0 && lastValidFrontCm < slowCm);
+    driveControlUpdateStraight(wasClose ? SONAR_FRONT_MIN_SPEED : cruiseSpeed);
+    deadbandEnteredAt = 0; // lost the reading -- no longer a confirmed hold
+    return false;
+  }
+
+  bool inDeadband = (frontCm >= stopCm - SONAR_DEADBAND) && (frontCm <= stopCm + SONAR_DEADBAND);
+
+  if (!inDeadband) {
+    deadbandEnteredAt = 0; // any excursion outside the deadband resets the hold timer
+
+    if (frontCm < stopCm - SONAR_DEADBAND) {
+      // Overshot the stop distance -- back off gently
+      driveControlUpdateStraight(-SONAR_FRONT_MIN_SPEED);
+      return false;
+    }
+
+    int speed = cruiseSpeed;
+    if (frontCm < slowCm) {
+      float frac = (frontCm - stopCm) / (slowCm - stopCm);
+      frac = constrain(frac, 0.0f, 1.0f);
+      speed = SONAR_FRONT_MIN_SPEED + (int)((cruiseSpeed - SONAR_FRONT_MIN_SPEED) * frac);
+    }
+    driveControlUpdateStraight(speed);
+    return false;
+  }
+
+  // Inside the deadband -- hold at zero PWM (not the full decel/settle ramp yet) 
+  //  Only commit to "reached" once it's held
+  // steady for SONAR_HOLD_MS straight.
+  if (deadbandEnteredAt == 0) {
+    deadbandEnteredAt = millis();
+  }
+  driveControlUpdate(0, 0);
+
+  if (millis() - deadbandEnteredAt >= SONAR_HOLD_MS) {
     driveControlStop();
+    deadbandEnteredAt = 0;
+    lastValidFrontCm = -1; // clean slate for the next approach
     return true;
   }
 
-  int speed = cruiseSpeed;
-  if (frontCm > 0 && frontCm < SONAR_FRONT_SLOWDOWN_CM) {
-    float frac = (frontCm - stopCm) / (SONAR_FRONT_SLOWDOWN_CM - stopCm);
-    frac = constrain(frac, 0.0f, 1.0f);
-    speed = SONAR_FRONT_MIN_SPEED + (int)((cruiseSpeed - SONAR_FRONT_MIN_SPEED) * frac);
-  }
-
-  driveControlUpdateStraight(speed);
   return false;
 }
 
@@ -145,9 +200,13 @@ static float wrap360(float heading) {
   return heading;
 }
 
-// Shortest signed error from the current heading to `target`, -180..180.
-static float turnHeadingError(float target) {
-  float error = target - imuGetHeading();
+// Shortest signed error from `currentHeading` to `target`, -180..180. Takes
+// the heading as a parameter (rather than calling imuGetHeading() itself)
+// so callers that also want to log/reuse the reading -- e.g.
+// driveControlUpdateStraight() below -- get exactly the same sample the
+// error was computed from, instead of a second, slightly later I2C read.
+static float turnHeadingError(float target, float currentHeading) {
+  float error = target - currentHeading;
   while (error > 180.0f)  error -= 360.0f;
   while (error < -180.0f) error += 360.0f;
   return error;
@@ -169,8 +228,24 @@ void driveControlUpdateStraight(int speed) {
   // turnHeadingError() already returns the shortest signed error wrapped to
   // -180..180 -- that's the same thing a wrap180() would give you, so a
   // separate one isn't needed; this just reuses the turn-control math.
-  float err = turnHeadingError(straightTargetHeading);
+  float heading = imuGetHeading();
+  float err = turnHeadingError(straightTargetHeading, heading);
   int correction = constrain((int)(DRIVE_HEADING_KP * err), -DRIVE_HEADING_MAX_CORRECTION, DRIVE_HEADING_MAX_CORRECTION);
+
+  // Throttled to the same cadence as driveControlUpdate()'s per-wheel
+  // tick/output log (DRIVE_PID_INTERVAL_MS) so the two lines interleave in
+  // the Serial log and DRIVE_HEADING_KP can be tuned from real heading-
+  // error/correction data the same way DRIVE_PID_KP/KI/KD are tuned from
+  // tick data -- see driveControlUpdate()'s "Logged unconditionally" comment.
+  static unsigned long lastHeadingLogAt = 0;
+  unsigned long now = millis();
+  if (now - lastHeadingLogAt >= DRIVE_PID_INTERVAL_MS) {
+    lastHeadingLogAt = now;
+    Serial.print("Straight  heading:"); Serial.print(heading, 1);
+    Serial.print(" target:"); Serial.print(straightTargetHeading, 1);
+    Serial.print(" err:"); Serial.print(err, 1);
+    Serial.print(" corr:"); Serial.println(correction);
+  }
 
   // err>0 -> target is clockwise of current heading -> nudge right (matches
   // the err>0/turn-right convention in turnControlUpdate() below). This
@@ -295,7 +370,7 @@ bool turnControlUpdate(int pwm) {
     logImuHealth("mid-turn");
   }
 
-  float err = turnHeadingError(turnTargetHeading);
+  float err = turnHeadingError(turnTargetHeading, imuGetHeading());
   float dist = abs(err);
 
   if (turnTickStartMs == 0) turnTickStartMs = millis();

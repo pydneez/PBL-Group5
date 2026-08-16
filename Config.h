@@ -100,12 +100,19 @@
 
 #define SONAR_DEADBAND 2
 
+// How long the front distance must stay continuously inside the +/-
+// SONAR_DEADBAND window before driveControlCruiseToSonarStop() commits to
+// "reached" (full decel-ramp stop, return true). Any excursion back outside
+// the deadband resets this timer. Guards against committing on a single
+// lucky reading that's about to drift back out -- see the hold logic there.
+#define SONAR_HOLD_MS 300
+
 // Floor PWM for the wall/belt approach (both forward, easing down as
 // distance closes in, and the gentle backup if it overshoots past
 // STOP_CM - SONAR_DEADBAND).\ 
 // 60 was enough to get all four turning together from 0. 
 // If a wheel is dragging during a slow approach, raise this before touching anything else.
-#define SONAR_FRONT_MIN_SPEED    60
+#define SONAR_FRONT_MIN_SPEED    65
 
 // Measured side clearance (cm) when the robot is centered in the drop-off wall
 #define SONAR_SIDE_CENTER_CM    25

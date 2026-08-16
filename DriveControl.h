@@ -33,19 +33,31 @@ void driveControlUpdate(int leftSpeed, int rightSpeed);
 // path, which needs to stay instant.
 void driveControlStop();
 
-// Drives straight ahead (via driveControlUpdate) while polling the front
-// sonar every call. Linearly eases speed down from cruiseSpeed toward
-// SONAR_FRONT_MIN_SPEED as the front distance closes in on stopCm (see
-// SONAR_FRONT_SLOWDOWN_CM in Config.h), so the robot arrives at the wall/
-// belt slowing down instead of hitting it at full speed. A -1 reading (no
-// echo -- out of range / nothing ahead yet, see Sonar.h) is treated as
-// "keep cruising", not "extremely close".
+// Drives straight ahead (via driveControlUpdateStraight) while polling the
+// front sonar every call. Four zones, keyed off stopCm/slowCm and
+// SONAR_DEADBAND (Config.h):
+//   - closer than stopCm - SONAR_DEADBAND: overshot -- gentle backup at
+//     -SONAR_FRONT_MIN_SPEED instead of grinding into the wall.
+//   - within +/- SONAR_DEADBAND of stopCm: holds at zero PWM and starts a
+//     SONAR_HOLD_MS timer; any reading that drifts back outside the
+//     deadband before the timer elapses cancels the hold and falls back to
+//     the backup/approach zones above -- only a reading that stays inside
+//     the deadband continuously for SONAR_HOLD_MS commits to "reached".
+//   - between stopCm+SONAR_DEADBAND and slowCm: still approaching -- speed
+//     eases linearly from cruiseSpeed down to SONAR_FRONT_MIN_SPEED.
+//   - beyond slowCm: full cruiseSpeed.
+// A -1 reading (no echo -- see Sonar.h) is treated as "keep cruising" only
+// before the front distance has ever been seen inside slowCm; once it has,
+// a dropped reading means "close and unsure", so this holds at
+// SONAR_FRONT_MIN_SPEED instead of assuming the way is clear (and cancels
+// any in-progress deadband hold).
 //
-// Call every loop() once sonar polling should be active. Returns true the
-// moment the front distance is within stopCm -- driveControlStop() has
+// Call every loop() once sonar polling should be active. Returns true only
+// once the front distance has held within the stopCm deadband continuously
+// for SONAR_HOLD_MS -- driveControlStop() (the full decel/settle ramp) has
 // already been called internally when that happens, so the caller just
 // needs to transition state.
-bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm);
+bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm, float slowCm);
 
 // Call once when entering a fresh straight-driving state (alongside
 // driveControlReset()). Latches the heading-hold target to whichever
