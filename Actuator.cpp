@@ -3,10 +3,19 @@
 
 static Servo gripperServo;
 static Servo liftServo;
+static Servo gateServo;
 static GripperState grip_state = GripperState::OPENING;
 static LiftState lift_state = LiftState::LIFTING_UP;
+static GateState gate_state = GateState::CLOSED;
 static unsigned long gripStateEnteredAt = 0;
 static unsigned long liftStateEnteredAt = 0;
+static unsigned long gateStateEnteredAt = 0;
+
+// True once GATE_SERVO_PIN is real hardware (not PIN_NOT_WIRED) -- lets
+// every gateXxx() function below no-op safely until the box/gate servo is
+// physically mounted, same pattern Encoder.cpp's attachEncoderIfWired()
+// uses for unwired encoder pins.
+static bool gateWired = false;
 
 void gripperInit() {
   gripperServo.attach(GRIPPER_SERVO_PIN);
@@ -74,6 +83,47 @@ void liftControlUpdate() {
   }
 }
 
+void gateInit() {
+  gateWired = (GATE_SERVO_PIN != PIN_NOT_WIRED);
+  if (!gateWired) {
+    Serial.println("Gate: GATE_SERVO_PIN not wired yet -- gate control disabled until Config.h has a real pin.");
+    gate_state = GateState::CLOSED; // already-settled so nothing downstream stalls waiting on it
+    return;
+  }
+  gateServo.attach(GATE_SERVO_PIN);
+  gateServo.write(GATE_CLOSE_ANGLE); // closed at boot -- nothing should fall out before the drop zone
+  gate_state = GateState::CLOSING;
+  gateStateEnteredAt = millis();
+  Serial.println("Gate Setup Complete");
+}
+
+void gateRequestOpen() {
+  if (!gateWired) return;
+  if (gate_state == GateState::OPEN || gate_state == GateState::OPENING) return;
+  gateServo.write(GATE_OPEN_ANGLE);
+  gate_state = GateState::OPENING;
+  gateStateEnteredAt = millis();
+}
+
+void gateRequestClose() {
+  if (!gateWired) return;
+  if (gate_state == GateState::CLOSED || gate_state == GateState::CLOSING) return;
+  gateServo.write(GATE_CLOSE_ANGLE);
+  gate_state = GateState::CLOSING;
+  gateStateEnteredAt = millis();
+}
+
+void gateControlUpdate() {
+  if (!gateWired) return;
+  if (millis() - gateStateEnteredAt < GATE_MS) return;
+
+  if (gate_state == GateState::OPENING) {
+    gate_state = GateState::OPEN;
+  } else if (gate_state == GateState::CLOSING) {
+    gate_state = GateState::CLOSED;
+  }
+}
+
 GripperState gripperGetState() {
   return grip_state;
 }
@@ -82,10 +132,18 @@ LiftState lifterGetState() {
   return lift_state;
 }
 
+GateState gateGetState() {
+  return gate_state;
+}
+
 bool gripperIsSettled() {
   return grip_state == GripperState::OPEN || grip_state == GripperState::CLOSED;
 }
 
 bool lifterIsSettled() {
   return lift_state == LiftState::LIFTED_UP || lift_state == LiftState::LIFTED_DOWN;
+}
+
+bool gateIsSettled() {
+  return gate_state == GateState::OPEN || gate_state == GateState::CLOSED;
 }

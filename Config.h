@@ -343,15 +343,18 @@
 //#define GRIPPER_MS  1185
 #define GRIPPER_MS  750
 
-#define DOOR_SERVO_PIN 34
-#define DOOR_OPEN_ANGLE   180 // original position 
-#define DOOR_CLOSE_ANGLE  120 // PLACEHOLDER -> still need to figure out
-#define DOOR_MS  750
-
-// Derived, not tuned directly -- see GRIPPER_SERVO_MS_PER_DEG above.
-// #define GRIPPER_MS  ((GRIPPER_OPEN_ANGLE - GRIPPER_CLOSE_ANGLE) * GRIPPER_SERVO_MS_PER_DEG + SERVO_SETTLE_MARGIN_MS)
 
 #define PIN_NOT_WIRED -1
+
+// ---------------- BOX GATE SERVO (releases carried cube(s) at the drop zone) ----------------
+#define GATE_SERVO_PIN PIN_NOT_WIRED
+#define GATE_OPEN_ANGLE   180 // original position
+#define GATE_CLOSE_ANGLE  120 // PLACEHOLDER -> still need to figure out
+#define GATE_MS  750
+
+// How long TaskState::GATE_OPEN (PBL.ino) holds the gate open at the drop
+// zone before moving
+#define GATE_OPEN_HOLD_MS 1500
 
 // ---------------- TORQUE SERVO (MG996R) ----------------
 #define LIFT_SERVO_PIN 35

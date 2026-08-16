@@ -27,9 +27,12 @@ enum class TaskState {
   GRIPPER_CLOSE,
   LIFT_UP,
   LIFT_DOWN,
+  GATE_OPEN,        // releases carried cube(s) at the drop zone -- gate servo not wired yet, see Actuator.cpp
+  GATE_CLOSE,
   ENCODER_TEST,
   TURN_TEST,
   DRIVE_PID_TEST,    // forward 2000ms, backward 2000ms, once -- re-baseline DRIVE_PID_TARGET_TICKS_PER_INTERVAL after a weight change
+  DRIVE_STRAIGHT_TEST, // forward 2000ms, backward 2000ms, once -- heading-hold active, for tuning DRIVE_HEADING_KP
   DONE
 };
 
@@ -72,10 +75,13 @@ const char* stateName(TaskState s) {
     case TaskState::GRIPPER_CLOSE: return "GRIPPER_CLOSE";
     case TaskState::LIFT_UP: return "LIFT_UP";
     case TaskState::LIFT_DOWN: return "LIFT_DOWN";
+    case TaskState::GATE_OPEN: return "GATE_OPEN";
+    case TaskState::GATE_CLOSE: return "GATE_CLOSE";
 
     case TaskState::ENCODER_TEST: return "ENCODER_TEST";
     case TaskState::TURN_TEST: return "TURN_TEST";
     case TaskState::DRIVE_PID_TEST: return "DRIVE_PID_TEST";
+    case TaskState::DRIVE_STRAIGHT_TEST: return "DRIVE_STRAIGHT_TEST";
     case TaskState::DONE:   return "DONE";
   }
   return "?";
@@ -118,7 +124,8 @@ void setup() {
 
     gripperInit();
     liftInit();
-    
+    gateInit();
+
     encoderInit();
     driveControlInit();
     stopAll();
@@ -203,6 +210,10 @@ void loop() {
           setState(TaskState::IDLE);
         } else if (c == 'p' || c == 'P') {
           setState(TaskState::DRIVE_PID_TEST);
+        } else if (c == 's' || c == 'S') {
+          setState(TaskState::DRIVE_STRAIGHT_TEST);
+        } else if (c == 'a' || c == 'A') {
+          setState(TaskState::APPROACH_BELT);
         }
       }
       break;
@@ -272,12 +283,16 @@ void loop() {
       }
 
       // Cruises at APPROACH_SPEED, easing down as the front sonar closes in
-      bool reachedBelt = driveControlCruiseToSonarStop(APPROACH_SPEED, SONAR_BELT_STOP_CM);
+      bool reachedBelt = driveControlCruiseToSonarStop(APPROACH_SPEED, SONAR_BELT_STOP_CM, SONAR_BELT_SLOW_CM);
 
       if (reachedBelt) {
-        // Cube pickup: lift down -> grab -> lift up -> release into the
-        // carrier (see LIFT_DOWN/GRIPPER_CLOSE/LIFT_UP/GRIPPER_OPEN chain).
-        setState(TaskState::LIFT_DOWN);
+        // Cube pickup: confirm a red/green cube is actually there -> lift
+        // down -> grab -> lift up -> release into the carrier (see
+        // DETECT_CUBE, then the LIFT_DOWN/GRIPPER_CLOSE/LIFT_UP/GRIPPER_OPEN
+        // chain).
+        //setState(TaskState::DETECT_CUBE);
+
+        setState(TaskState::IDLE);
       }
       break;
     }
@@ -290,11 +305,10 @@ void loop() {
         driveControlStraightStart();
       }
 
-      bool reachedDropOff = driveControlCruiseToSonarStop(CRUISE_SPEED, SONAR_DROPZONE_STOP_CM);
+      bool reachedDropOff = driveControlCruiseToSonarStop(CRUISE_SPEED, SONAR_DROPZONE_STOP_CM, SONNAR_DROPZONE_SLOW_CM);
 
       if (reachedDropOff) {
-        // TODO: hand off to collector door open; doens't exist yet
-        setState(TaskState::IDLE);
+        setState(TaskState::GATE_OPEN);
       }
       break;
     }
@@ -363,6 +377,77 @@ void loop() {
       break;
     }
 
+
+    case TaskState::GATE_OPEN: {
+      static unsigned long lastEnteredAt = 0;
+      if (stateEnteredAt != lastEnteredAt) {
+        lastEnteredAt = stateEnteredAt;
+        gateRequestOpen();
+      }
+      // Matches the sketch's "time_entered > OPEN_TIME" condition directly --
+      // not gated on gateIsSettled(), since GATE_OPEN_HOLD_MS is meant to
+      // cover the cube actually sliding/falling out, not just the servo
+      // finishing its own GATE_MS travel time.
+      if (timeInState() >= GATE_OPEN_HOLD_MS) {
+        setState(TaskState::GATE_CLOSE);
+      }
+      break;
+    }
+
+    case TaskState::GATE_CLOSE: {
+      static unsigned long lastEnteredAt = 0;
+      if (stateEnteredAt != lastEnteredAt) {
+        lastEnteredAt = stateEnteredAt;
+        gateRequestClose();
+      }
+      if (gateIsSettled()) {
+        // Reuses DRIVE_BACKWARD -- its own comment already says "driving
+        // away from drop-off wall", and DROPPING_CUBE already routes here
+        // for the same reason.
+        setState(TaskState::DRIVE_BACKWARD);
+      }
+      break;
+    }
+
+    case TaskState::DETECT_CUBE: {
+      // Stay put while scanning -- SEEK_CUBE already picks the single
+      // largest matching (red/green) block itself (Pixy.cpp's scoring
+      // loop), so no centering/position check is needed here: the camera
+      // is mounted off the robot's centerline anyway (doesn't line up with
+      // the gripper), so "centered in frame" wouldn't mean "in reach" even
+      // if we checked it.
+      stopAll();
+
+      static unsigned long lastEnteredAt = 0;
+      static int consecutiveMatches = 0;
+      if (stateEnteredAt != lastEnteredAt) {
+        lastEnteredAt = stateEnteredAt;
+        consecutiveMatches = 0;
+        Serial.println("DETECT_CUBE: waiting for a red/green cube...");
+      }
+
+      PixyDetection d = pixyDetect(PixyDetectMode::SEEK_CUBE);
+      if (d.found) {
+        consecutiveMatches++;
+        Serial.print("DETECT_CUBE: candidate ");
+        Serial.print(d.color == CubeColor::RED ? "RED" : "GREEN");
+        Serial.print(" area="); Serial.print((long)d.width * d.height);
+        Serial.print(" consecutive="); Serial.println(consecutiveMatches);
+      } else {
+        consecutiveMatches = 0;
+      }
+
+      if (consecutiveMatches >= DETECT_CUBE_CONFIRM_FRAMES) {
+        detectedCubeColor = d.color;
+        Serial.print("DETECT_CUBE: confirmed ");
+        Serial.println(detectedCubeColor == CubeColor::RED ? "RED" : "GREEN");
+        setState(TaskState::LIFT_DOWN);
+      } else if (timeInState() >= DETECT_CUBE_TIMEOUT_MS) {
+        Serial.println("DETECT_CUBE: timed out waiting for a cube -- returning to IDLE");
+        setState(TaskState::IDLE);
+      }
+      break;
+    }
 
     case TaskState::TURN_TO_DROPZONE: {
       static unsigned long lastEnteredAt = 0;
@@ -450,6 +535,48 @@ void loop() {
       break;
     }
 
+    case TaskState::DRIVE_STRAIGHT_TEST: {
+      // Same forward/backward shuttle as DRIVE_PID_TEST, but through
+      // driveControlUpdateStraight() with heading-hold active, so it prints
+      // the "Straight heading:.. err:.. corr:.." log (DriveControl.cpp) for
+      // tuning DRIVE_HEADING_KP -- the encoder-only DRIVE_PID_TEST
+      // deliberately skips this layer, see its own comment above.
+      static unsigned long lastEnteredAt = 0;
+      static unsigned long phaseStartAt = 0;
+      static int phase = 0; // 0 = forward, 1 = backward, 2 = done
+
+      if (stateEnteredAt != lastEnteredAt) {
+        lastEnteredAt = stateEnteredAt;
+        phase = 0;
+        phaseStartAt = millis();
+        driveControlReset();
+        // Latched once for both phases -- reversing direction doesn't change
+        // which cardinal heading we're holding against (see
+        // driveControlUpdateStraight()'s reverse-direction comment).
+        driveControlStraightStart();
+        Serial.println("=== DRIVE_STRAIGHT_TEST: forward phase (2000ms) ===");
+      }
+
+      if (phase == 0) {
+        driveControlUpdateStraight(CRUISE_SPEED);
+        if (millis() - phaseStartAt >= 2000) {
+          driveControlStop();
+          driveControlReset();
+          phase = 1;
+          phaseStartAt = millis();
+          Serial.println("=== DRIVE_STRAIGHT_TEST: backward phase (2000ms) ===");
+        }
+      } else if (phase == 1) {
+        driveControlUpdateStraight(-CRUISE_SPEED);
+        if (millis() - phaseStartAt >= 2000) {
+          driveControlStop();
+          Serial.println("=== DRIVE_STRAIGHT_TEST: done -- paste the 'Straight heading:.. err:.. corr:..' lines above back to Claude ===");
+          setState(TaskState::IDLE);
+        }
+      }
+      break;
+    }
+
     case TaskState::ENCODER_TEST: {
       static unsigned long lastPrintAt = 0;
       static unsigned long lastEnteredAt = 0;
@@ -488,6 +615,7 @@ void loop() {
   // even after the robot has moved on to driving/turning.
   gripperControlUpdate();
   liftControlUpdate();
+  gateControlUpdate();
 
   // Add an emergency stop that works from ANY TaskState:
   if (digitalRead(A0) == HIGH) {   // example: a bumper switch on A0
