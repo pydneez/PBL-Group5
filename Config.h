@@ -1,19 +1,19 @@
 #pragma once
 
 // ---------------- MOTOR PINS ----------------
-#define PIN_L_IN1  28   // left front direction 
-#define PIN_L_IN2  29
-#define PIN_L_IN3  27   // left rear direction 
-#define PIN_L_IN4  26
-#define PIN_L_FRONT  8    // left front speed (PWM)
-#define PIN_L_REAR  9     // left rear speed (PWM)
+#define PIN_L_IN1  24   // left front direction 
+#define PIN_L_IN2  25
+#define PIN_L_IN3  23   // left rear direction 
+#define PIN_L_IN4  22
+#define PIN_L_FRONT  12    // left front speed (PWM)
+#define PIN_L_REAR  13     // left rear speed (PWM)
 
-#define PIN_R_IN1  32   // right front direction -- swapped
-#define PIN_R_IN2  33
-#define PIN_R_IN3  30   // right rear direction 
-#define PIN_R_IN4  31
-#define PIN_R_FRONT  6    // right front speed (PWM)
-#define PIN_R_REAR  7    // right rear speed (PWM)
+#define PIN_R_IN1  28   // right front direction -- swapped
+#define PIN_R_IN2  29
+#define PIN_R_IN3  26   // right rear direction 
+#define PIN_R_IN4  27
+#define PIN_R_FRONT  10    // right front speed (PWM)
+#define PIN_R_REAR  11    // right rear speed (PWM)
 
 // ---------------- TIMING / SPEED ----------------
 // Safety-net max drive time for DRIVE_FORWARD_TO_CENTER -- the sonar (see
@@ -26,7 +26,13 @@
 #define TURN_MS     800   // unused now that turns are closed-loop against IMU heading (see TURN_* below)
 #define BACK_MS     1500   // how long to reverse
 #define CRUISE_SPEED 180
-#define APPROACH_SPEED 10
+
+// Ceiling speed for the wall/belt approach -- eased down to
+// SONAR_FRONT_MIN_SPEED as the front sonar closes in (see
+// driveControlCruiseToSonarStop()). Must stay above SONAR_FRONT_MIN_SPEED or
+// the ease-down math inverts. Placeholder above the measured stall floor --
+// retune once real approach behavior is characterized.
+#define APPROACH_SPEED 90
 #define TURN_SPEED   100
 
 // Number of forward/backward round trips the DRIVE_FORWARD_TO_CENTER<->DRIVE_BACKWARD
@@ -64,6 +70,20 @@
 // PixyMon/Serial.
 #define CUBE_GREEN_BONUS_AREA 0
 
+// DETECT_CUBE (PBL.ino) requires this many consecutive frames reporting the
+// same pixyDetect(SEEK_CUBE) match before committing to LIFT_DOWN -- guards
+// against a single noisy/spurious frame (specular glint, momentary misread)
+// triggering a real mechanical grab. Not yet measured against a real false-
+// positive rate; lower if this feels sluggish to react, raise if it commits
+// on noise.
+#define DETECT_CUBE_CONFIRM_FRAMES 3
+
+// Safety net: if no cube is confirmed within this long, DETECT_CUBE gives up
+// and returns to IDLE rather than sitting at the belt forever waiting on a
+// Pixy misread or an empty belt. Placeholder -- retune once real belt
+// cube-arrival timing is known.
+#define DETECT_CUBE_TIMEOUT_MS 4000
+
 // ---------------- SONAR / ULTRASONIC ----------------
 #define TRIG_FRONT 38
 #define ECHO_FRONT 39
@@ -73,20 +93,19 @@
 #define ECHO_RIGHT 45  
 
 // Front distance (cm) at which the robot is close enough to the drop-off wall
-#define SONAR_DROPZONE_STOP_CM  15
-#define SONAR_BELT_STOP_CM  7
-#define SONAR_BELT_RIGHT_SONAR_CM  28
+#define SONAR_DROPZONE_STOP_CM  15 
+#define SONNAR_DROPZONE_SLOW_CM 25
+#define SONAR_BELT_STOP_CM  4
+#define SONAR_BELT_SLOW_CM 10
 
-// Front distance (cm) at which driveControlCruiseToSonarStop() starts
-// easing off CRUISE_SPEED toward SONAR_FRONT_MIN_SPEED, so the robot
-// arrives at its stop threshold (wall or belt) slowing down instead of
-// hitting it at full speed.
-#define SONAR_FRONT_SLOWDOWN_CM  20
+#define SONAR_DEADBAND 2
 
-// Floor PWM while cruising down close to an obstacle -- keeps enough drive
-// torque (and encoder ticks for the straight-line PID) right up to the stop
-// threshold instead of trailing off to a crawl.
-#define SONAR_FRONT_MIN_SPEED    2
+// Floor PWM for the wall/belt approach (both forward, easing down as
+// distance closes in, and the gentle backup if it overshoots past
+// STOP_CM - SONAR_DEADBAND).\ 
+// 60 was enough to get all four turning together from 0. 
+// If a wheel is dragging during a slow approach, raise this before touching anything else.
+#define SONAR_FRONT_MIN_SPEED    60
 
 // Measured side clearance (cm) when the robot is centered in the drop-off wall
 #define SONAR_SIDE_CENTER_CM    25
@@ -126,6 +145,19 @@
 // Correction is clamped to +/- this many PWM units so one noisy reading
 // can't slam a wheel's speed to 0 or 255.
 #define DRIVE_PID_MAX_CORRECTION 50
+
+// Below this commanded |PWM|, the tick-rate PID is skipped and the wheel
+// drives open-loop at baseSpeed instead. DRIVE_PID_TARGET_TICKS_PER_INTERVAL
+// was measured at CRUISE_SPEED, not at the APPROACH_SPEED/SONAR_FRONT_MIN_SPEED
+// range, so the PID saw permanent error there and pinned its correction at
+// +DRIVE_PID_MAX_CORRECTION for the whole approach -- e.g. commanding 10
+// actually drove ~60, which is why APPROACH_BELT kept hitting the wall
+// despite a "slow" configured speed. Set above APPROACH_SPEED so the entire
+// belt/dropzone approach (including the SONAR_FRONT_MIN_SPEED floor and the
+// gentle backup) stays open-loop end to end -- retune
+// DRIVE_PID_TARGET_TICKS_PER_INTERVAL for that speed band instead of lowering
+// this if per-wheel correction turns out to be needed down there too.
+#define DRIVE_PID_MIN_SPEED_FOR_CORRECTION 100
 
 // Heading-hold gain for driveControlUpdateStraight() -- differential PWM
 // bias per degree of error from the cardinal heading latched at the start
@@ -300,8 +332,14 @@
 // ---------------- GRIPPER SERVO (MG90) ----------------
 #define GRIPPER_SERVO_PIN 34
 #define GRIPPER_OPEN_ANGLE   180 // original position dont change!!!!!
-#define GRIPPER_CLOSE_ANGLE  75
-#define GRIPPER_MS  1185
+#define GRIPPER_CLOSE_ANGLE  65
+//#define GRIPPER_MS  1185
+#define GRIPPER_MS  750
+
+#define DOOR_SERVO_PIN 34
+#define DOOR_OPEN_ANGLE   180 // original position 
+#define DOOR_CLOSE_ANGLE  120 // PLACEHOLDER -> still need to figure out
+#define DOOR_MS  750
 
 // Derived, not tuned directly -- see GRIPPER_SERVO_MS_PER_DEG above.
 // #define GRIPPER_MS  ((GRIPPER_OPEN_ANGLE - GRIPPER_CLOSE_ANGLE) * GRIPPER_SERVO_MS_PER_DEG + SERVO_SETTLE_MARGIN_MS)
@@ -312,4 +350,4 @@
 #define LIFT_SERVO_PIN 35
 #define LIFT_UP_ANGLE 200
 #define LIFT_DOWN_ANGLE 0
-#define LIFTER_MS 850
+#define LIFTER_MS 780
