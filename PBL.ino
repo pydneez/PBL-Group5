@@ -12,21 +12,23 @@
 enum class TaskState {
   IMU_CALIBRATE,     // waiting for the BNO055 to report fully calibrated before anything else runs
   IDLE,              // waiting for a Serial start command
-  DETECT_CUBE,       // waiting for Pixy to identify
-  TURN_TO_DROPZONE,  // fixed turn: red -> left, green -> right
-  LOCATE_DROPZONE,   // waiting for Pixy to confirm the matching drop-off marker
   DRIVE_FORWARD_TO_CENTER,     // driving straight, open-loop; sonar polling starts after DRIVE_BEFORE_SONAR_MS
-  DROPPING_CUBE,     // stopped within SONAR_DROPZONE_STOP_CM; grabber not implemented yet
-  DRIVE_BACKWARD,   // driving away from drop-off wall
   TURN_RIGHT_TO_BELT, // closed-loop 90 deg turn to face the belt
-  APPROACH_BELT,     // driving straight at APPROACH_SPEED; stops within SONAR_BELT_STOP_CM
-  APPROACH_DROP_OFF,
   TURN_LEFT_TO_BELT,         // closed-loop 90 deg turn against IMU heading
-  TURN_180,
+  APPROACH_BELT,     // driving straight at BELT_APPROACH_SPEED; stops within SONAR_BELT_STOP_CM
+  DETECT_CUBE,       // waiting for Pixy to identify
   GRIPPER_OPEN,
   GRIPPER_CLOSE,
   LIFT_UP,
   LIFT_DOWN,
+  BACKWARD_FROM_BELT, 
+  TURN_TO_DROPZONE,  // fixed turn: red -> left, green -> right
+  LOCATE_DROPZONE,   // waiting for Pixy to confirm the matching drop-off marker
+  APPROACH_DROPZONE,
+  DROPPING_CUBE,     // stopped within SONAR_DROPZONE_STOP_CM; grabber not implemented yet
+  DRIVE_BACKWARD_TO_CENTER,   // driving away from drop-off wall
+
+  TURN_180,
   GATE_OPEN,        // releases carried cube(s) at the drop zone -- gate servo not wired yet, see Actuator.cpp
   GATE_CLOSE,
   ENCODER_TEST,
@@ -41,7 +43,7 @@ enum class TaskState {
 // marker LOCATE_DROPZONE looks for. Cleared each time IDLE is (re)entered.
 CubeColor detectedCubeColor = CubeColor::NONE;
 
-// Counts completed round trips of the DRIVE_FORWARD_TO_CENTER<->DRIVE_BACKWARD PID
+// Counts completed round trips of the DRIVE_FORWARD_TO_CENTER<->DRIVE_BACKWARD_TO_CENTER PID
 // calibration shuttle. Reset to 0 when IDLE kicks off a fresh run.
 int driveTestRoundTrip = 0;
 
@@ -58,17 +60,18 @@ const char* stateName(TaskState s) {
     case TaskState::IMU_CALIBRATE:    return "IMU_CALIBRATE";
     case TaskState::IDLE:             return "IDLE";
     case TaskState::DRIVE_FORWARD_TO_CENTER:    return "DRIVE_FORWARD_TO_CENTER";
-    case TaskState::DRIVE_BACKWARD:   return "DRIVE_BACKWARD";
+    case TaskState::DRIVE_BACKWARD_TO_CENTER:   return "DRIVE_BACKWARD_TO_CENTER";
     case TaskState::TURN_RIGHT_TO_BELT: return "TURN_RIGHT_TO_BELT";
     case TaskState::TURN_LEFT_TO_BELT: return "TURN_LEFT_TO_BELT";
     case TaskState::TURN_180: return "TURN_180";
     
     case TaskState::APPROACH_BELT: return "APPROACH_BELT";
+    case TaskState::BACKWARD_FROM_BELT: return "BACKWARD_FROM_BELT";
     case TaskState::DETECT_CUBE:      return "DETECT_CUBE";
 
     case TaskState::TURN_TO_DROPZONE: return "TURN_TO_DROPZONE";
     case TaskState::LOCATE_DROPZONE:  return "LOCATE_DROPZONE";
-    case TaskState::APPROACH_DROP_OFF: return "APPROACH_DROP_OFF";
+    case TaskState::APPROACH_DROPZONE: return "APPROACH_DROPZONE";
     case TaskState::DROPPING_CUBE:    return "DROPPING_CUBE";
     
     case TaskState::GRIPPER_OPEN: return "GRIPPER_OPEN";
@@ -202,7 +205,7 @@ void loop() {
         } else if (c == 'f' || c == 'F') {
           setState(TaskState::DRIVE_FORWARD_TO_CENTER);
         } else if (c == 'b' || c == 'B') {
-          setState(TaskState::DRIVE_BACKWARD);
+          setState(TaskState::DRIVE_BACKWARD_TO_CENTER);
         } else if (c == 'g' || c == 'G') {
           // Runs the full pickup cycle: lift down -> grab -> lift up -> release.
           setState(TaskState::LIFT_DOWN);
@@ -241,7 +244,7 @@ void loop() {
       break;
     }
 
-    case TaskState::DRIVE_BACKWARD: {
+    case TaskState::DRIVE_BACKWARD_TO_CENTER: {
 
       static unsigned long lastEnteredAt = 0;
       if (stateEnteredAt != lastEnteredAt) {
@@ -251,7 +254,7 @@ void loop() {
 
       driveControlUpdate(-CRUISE_SPEED, -CRUISE_SPEED);
 
-      if (timeInState() >= BACK_MS) {
+      if (timeInState() >= DRIVE_MS) {
         driveControlStop();
         setState(TaskState::IDLE);
       }
@@ -282,8 +285,10 @@ void loop() {
         Serial.println(" cm");
       }
 
-      // Cruises at APPROACH_SPEED, easing down as the front sonar closes in
-      bool reachedBelt = driveControlCruiseToSonarStop(APPROACH_SPEED, SONAR_BELT_STOP_CM, SONAR_BELT_SLOW_CM);
+
+
+      // Cruises at BELT_APPROACH_SPEED, easing down as the front sonar closes in
+      bool reachedBelt = driveControlCruiseToSonarStop(BELT_APPROACH_SPEED, SONAR_BELT_STOP_CM, SONAR_BELT_SLOW_CM);
 
       if (reachedBelt) {
         // Cube pickup: confirm a red/green cube is actually there -> lift
@@ -297,7 +302,8 @@ void loop() {
       break;
     }
 
-    case TaskState::APPROACH_DROP_OFF: {
+    case TaskState::BACKWARD_FROM_BELT: {
+
       static unsigned long lastEnteredAt = 0;
       if (stateEnteredAt != lastEnteredAt) {
         lastEnteredAt = stateEnteredAt;
@@ -305,10 +311,39 @@ void loop() {
         driveControlStraightStart();
       }
 
-      bool reachedDropOff = driveControlCruiseToSonarStop(CRUISE_SPEED, SONAR_DROPZONE_STOP_CM, SONNAR_DROPZONE_SLOW_CM);
+      driveControlUpdateStraight(-CRUISE_SPEED);
+
+      if (timeInState() >= BACK_MS) {
+        driveControlStop();
+
+        // turn to the correct drop zone according to the colour picked up
+        setState(TaskState::TURN_TO_DROPZONE);
+      
+      }
+      break;
+    }
+
+    case TaskState::APPROACH_DROPZONE: {
+      static unsigned long lastEnteredAt = 0;
+      static unsigned long lastPrintAt = 0;
+      if (stateEnteredAt != lastEnteredAt) {
+        lastEnteredAt = stateEnteredAt;
+        driveControlReset();
+        driveControlStraightStart();
+      }
+
+      if (millis() - lastPrintAt >= 200) {
+        lastPrintAt = millis();
+        Serial.print("APPROACH_DROP_ZONE front sonar: ");
+        Serial.print(sonarGetFrontCm());
+        Serial.println(" cm");
+      }
+
+      bool reachedDropOff = driveControlCruiseToSonarStop(DROPZONE_APPROACH_SPEED, SONAR_DROPZONE_STOP_CM, SONAR_DROPZONE_SLOW_CM);
 
       if (reachedDropOff) {
-        setState(TaskState::GATE_OPEN);
+        //setState(TaskState::GATE_OPEN);
+        setState(TaskState::IDLE);
       }
       break;
     }
@@ -316,7 +351,7 @@ void loop() {
     case TaskState::TURN_LEFT_TO_BELT: {
       static unsigned long lastEnteredAt = 0;
       if (runSingleTurn(-90, lastEnteredAt)) {
-        setState(TaskState::IDLE);
+        setState(TaskState::APPROACH_BELT);
       }
       break;
     }
@@ -401,10 +436,10 @@ void loop() {
         gateRequestClose();
       }
       if (gateIsSettled()) {
-        // Reuses DRIVE_BACKWARD -- its own comment already says "driving
+        // Reuses DRIVE_BACKWARD_TO_CENTER -- its own comment already says "driving
         // away from drop-off wall", and DROPPING_CUBE already routes here
         // for the same reason.
-        setState(TaskState::DRIVE_BACKWARD);
+        setState(TaskState::DRIVE_BACKWARD_TO_CENTER);
       }
       break;
     }
@@ -460,7 +495,7 @@ void loop() {
     case TaskState::LOCATE_DROPZONE: {
       stopAll(); // stay put while confirming the marker; only Pixy is polled here
 
-      setState(TaskState::APPROACH_DROP_OFF);     
+      setState(TaskState::APPROACH_DROPZONE);     
     }
 
     
@@ -473,7 +508,7 @@ void loop() {
         gripperRequestOpen();
       }
       if (gripperIsSettled()) {
-        setState(TaskState::DRIVE_BACKWARD);
+        setState(TaskState::DRIVE_BACKWARD_TO_CENTER);
       }
       break;
     }
@@ -559,7 +594,7 @@ void loop() {
 
       if (phase == 0) {
         driveControlUpdateStraight(CRUISE_SPEED);
-        if (millis() - phaseStartAt >= 2000) {
+        if (millis() - phaseStartAt >= 1800) {
           driveControlStop();
           driveControlReset();
           phase = 1;
@@ -568,7 +603,7 @@ void loop() {
         }
       } else if (phase == 1) {
         driveControlUpdateStraight(-CRUISE_SPEED);
-        if (millis() - phaseStartAt >= 2000) {
+        if (millis() - phaseStartAt >= 1800) {
           driveControlStop();
           Serial.println("=== DRIVE_STRAIGHT_TEST: done -- paste the 'Straight heading:.. err:.. corr:..' lines above back to Claude ===");
           setState(TaskState::IDLE);
