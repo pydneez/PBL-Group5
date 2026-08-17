@@ -10,7 +10,7 @@
 
 void driveControlInit();
 
-// Call once when entering a fresh DRIVE_FORWARD_TO_CENTER/DRIVE_BACKWARD state
+// Call once when entering a fresh DRIVE_FORWARD_TO_CENTER/DRIVE_BACKWARD_TO_CENTER state
 // Clears encoder ticks and PID history left over from whatever ran previously.
 void driveControlReset();
 
@@ -28,7 +28,7 @@ void driveControlUpdate(int leftSpeed, int rightSpeed);
 // at 0 for DRIVE_SETTLE_MS so residual momentum/coasting actually dies out
 // before returning, so the caller's next move (e.g. reversing direction)
 // starts from a genuinely stationary robot. Call this instead of stopAll()
-// when ending a DRIVE_FORWARD_TO_CENTER/DRIVE_BACKWARD run. Blocking, but short
+// when ending a DRIVE_FORWARD_TO_CENTER/DRIVE_BACKWARD_TO_CENTER run. Blocking, but short
 // (DRIVE_DECEL_MS + DRIVE_SETTLE_MS at most) -- not for the emergency stop
 // path, which needs to stay instant.
 void driveControlStop();
@@ -60,12 +60,12 @@ void driveControlStop();
 bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm, float slowCm);
 
 // Call once when entering a fresh straight-driving state (alongside
-// driveControlReset()). Latches the heading-hold target to whichever
-// cardinal (0/90/180/270) the robot's current IMU heading is closest to --
-// snapped ONCE here rather than every loop() tick, so noise near a 45 deg
-// boundary can't flip-flop the target mid-drive. This is what lets the
-// robot straighten itself onto a clean cardinal even when it was placed a
-// few degrees off (e.g. at 85 deg it latches 90, then corrects toward it).
+// driveControlReset()). Latches the heading-hold target to the robot's
+// current IMU heading at this instant -- snapped ONCE here rather than
+// every loop() tick, so the target can't drift mid-drive. Arena walls
+// aren't guaranteed to sit on clean cardinal (0/90/180/270) headings, so
+// this holds whatever heading the robot was actually placed at instead of
+// snapping to the nearest cardinal.
 void driveControlStraightStart();
 
 // Drives straight at `speed` (signed, same convention as driveControlUpdate)

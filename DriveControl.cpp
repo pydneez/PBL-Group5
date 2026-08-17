@@ -134,7 +134,7 @@ void driveControlStop() {
 }
 
 bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm, float slowCm) {
-  float frontCm = sonarGetFrontCm();
+  int frontCm = sonarGetFrontCm();
 
   if (frontCm > 0) {
     lastValidFrontCm = frontCm;
@@ -216,10 +216,9 @@ static float straightTargetHeading = 0;
 
 void driveControlStraightStart() {
   float heading = imuGetHeading();
-  // Nearest cardinal: e.g. 85 -> 90, but 140 -> 180 (closer to 180 than 90)
-  // -- (heading/90 + 0.5) then truncate rounds to the nearest multiple of
-  // 90 rather than always rounding down.
-  straightTargetHeading = wrap360((float)((int)(heading / 90.0f + 0.5f)) * 90.0f);
+  // Hold whatever heading the robot is actually at, not the nearest
+  // cardinal (0/90/180/270)
+  straightTargetHeading = heading;
   Serial.print("Straight heading-hold: current="); Serial.print(heading, 1);
   Serial.print(" target="); Serial.println(straightTargetHeading, 1);
 }
@@ -271,11 +270,11 @@ static void driveTurnWheels(int leftPwm, int rightPwm) {
 static float turnStartHeading = 0;
 
 // Prints calibration.system + raw magnetometer, and warns if system==0 --
-// per IMU.h, heading is only trustworthy once system>0. Added to chase down
-// turn accuracy after moving heavy components (e.g. the battery) near the
-// BNO055: a nearby ferrous/magnetic mass changes the sensor's magnetic
-// environment and can silently invalidate the EEPROM-restored hard-iron
-// calibration, which nothing elsewhere in the turn path checks for.
+// per IMU.h, heading is only trustworthy once system>0. cal.system now
+// reflects only accel+gyro (IMU.cpp runs IMUPLUS, not NDOF, specifically
+// because those two calibrate reliably while the magnetometer doesn't --
+// see imuInit()); rawMag is logged purely as a diagnostic to confirm motor
+// EMI when chasing turn accuracy, since it no longer feeds imuGetHeading().
 static void logImuHealth(const char* when) {
   ImuCalibration cal = imuGetCalibration();
   ImuVector3 mag = imuGetRawMagnetometer();
