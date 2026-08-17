@@ -6,7 +6,11 @@
 // Returns false if the BNO055 wasn't detected on the I2C bus (check wiring/address).
 bool imuInit();
 
-// 0-360 degrees, magnetic-north-referenced (NDOF fusion: accel+gyro+magnetometer).
+// 0-360 degrees, relative fusion heading (IMUPLUS: accel+gyro only, no
+// magnetometer -- NOT referenced to magnetic north). Every caller only cares
+// about deltas from a heading read at the start of a maneuver, so dropping
+// the magnetometer trades away absolute compass bearing for immunity to the
+// motor EMI that was corrupting it (see imuInit() in IMU.cpp).
 // Only trustworthy once calibration.system > 0 -- see imuGetCalibration().
 float imuGetHeading();
 
@@ -42,7 +46,7 @@ bool imuRestartCalibration();
 // Debug-only: prints the chip's actual operating mode register and system
 // status/error registers to Serial. Unlike imuGetHeading()/imuGetCalibration()
 // (which silently read back all-zero on a failed I2C transaction), this reads
-// registers that reveal WHY: mode != NDOF means something reset/never left
+// registers that reveal WHY: mode != IMUPLUS means something reset/never left
 // config mode; a nonzero system error means the chip is alive and answering
 // I2C but reports an internal fault (see BNO055 datasheet 4.3.59).
 void imuPrintDiagnostics();

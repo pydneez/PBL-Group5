@@ -12,7 +12,22 @@ static Adafruit_BNO055 bno(BNO055_SENSOR_ID, BNO055_I2C_ADDR, &Wire);
 static bool calibrationSavedThisSession = true;
 
 bool imuInit() {
-  if (!bno.begin(OPERATION_MODE_NDOF)) {
+  // IMUPLUS (accel+gyro fusion only, no magnetometer) instead of NDOF: every
+  // caller of imuGetHeading() (turnControlStart/driveControlStraightStart in
+  // DriveControl.cpp) only ever measures a *relative* delta from whatever
+  // heading was read at the start of that maneuver, never an absolute
+  // magnetic-north bearing -- so the magnetometer was pure liability, not a
+  // need. Real turn logs showed raw mag swinging 150+ uT (motor EMI) while
+  // gyro/accel stayed solidly calibrated at 3 the whole time; NDOF's fused
+  // heading rode that corrupted mag signal, so the turn controller was
+  // chasing a target that moved on its own -- that's what produced the
+  // ~20-30deg overshoot and oscillation. IMUPLUS drops the magnetometer from
+  // the fusion entirely, so it's immune to that interference, and per the
+  // Adafruit library's isFullyCalibrated() (see its switch on _mode),
+  // IMUPLUS only requires accel==3 && gyro==3 -- both already reached
+  // reliably -- instead of also waiting on a mag calibration that motor EMI
+  // was preventing from ever converging above 0.
+  if (!bno.begin(OPERATION_MODE_IMUPLUS)) {
     return false;
   }
   delay(1000); // let the sensor settle before use (matches Adafruit's own example)
@@ -96,7 +111,7 @@ void imuPrintDiagnostics() {
   uint8_t sysStatus, selfTest, sysError;
   bno.getSystemStatus(&sysStatus, &selfTest, &sysError);
   Serial.print("  IMU diag: mode=0x"); Serial.print(mode, HEX);
-  Serial.print(" (NDOF=0x0C)  sysStatus="); Serial.print(sysStatus);
+  Serial.print(" (IMUPLUS=0x08)  sysStatus="); Serial.print(sysStatus);
   Serial.print(" selfTest=0x"); Serial.print(selfTest, HEX);
   Serial.print(" sysError="); Serial.println(sysError);
 }
