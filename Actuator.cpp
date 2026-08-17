@@ -11,11 +11,6 @@ static unsigned long gripStateEnteredAt = 0;
 static unsigned long liftStateEnteredAt = 0;
 static unsigned long gateStateEnteredAt = 0;
 
-// True once GATE_SERVO_PIN is real hardware (not PIN_NOT_WIRED) -- lets
-// every gateXxx() function below no-op safely until the box/gate servo is
-// physically mounted, same pattern Encoder.cpp's attachEncoderIfWired()
-// uses for unwired encoder pins.
-static bool gateWired = false;
 
 void gripperInit() {
   gripperServo.attach(GRIPPER_SERVO_PIN);
@@ -28,11 +23,19 @@ void gripperInit() {
 
 void liftInit() {
   liftServo.attach(LIFT_SERVO_PIN);
-  liftServo.write(LIFT_UP_ANGLE);
+  liftServo.write(LIFT_STOP);  // arm must be manually set to the up position before power-on
 
-  lift_state = LiftState::LIFTING_UP;
+  lift_state = LiftState::LIFTED_UP;
   liftStateEnteredAt = millis();
   Serial.println("Lifter Setup Complete");
+}
+
+void gateInit() {
+  gateServo.attach(GATE_SERVO_PIN);
+  gateServo.write(GATE_CLOSE_ANGLE); 
+  gate_state = GateState::CLOSING;
+  gateStateEnteredAt = millis();
+  Serial.println("Gate Setup Complete");
 }
 
 void gripperRequestOpen() {
@@ -51,14 +54,14 @@ void gripperRequestClose() {
 
 void liftRequestUp() {
   if (lift_state == LiftState::LIFTED_UP || lift_state == LiftState::LIFTING_UP) return;
-  liftServo.write(LIFT_UP_ANGLE);
+  liftServo.write(LIFT_UP_NUM);
   lift_state = LiftState::LIFTING_UP;
   liftStateEnteredAt = millis();
 }
 
 void liftRequestDown() {
   if (lift_state == LiftState::LIFTED_DOWN || lift_state == LiftState::LIFTING_DOWN) return;
-  liftServo.write(LIFT_DOWN_ANGLE);
+  liftServo.write(LIFT_DOWN_NUM);
   lift_state = LiftState::LIFTING_DOWN;
   liftStateEnteredAt = millis();
 }
@@ -77,28 +80,15 @@ void liftControlUpdate() {
   if (millis() - liftStateEnteredAt < LIFTER_MS) return;
 
   if (lift_state == LiftState::LIFTING_UP) {
+    liftServo.write(LIFT_STOP);
     lift_state = LiftState::LIFTED_UP;
   } else if (lift_state == LiftState::LIFTING_DOWN) {
+    liftServo.write(LIFT_STOP);
     lift_state = LiftState::LIFTED_DOWN;
   }
 }
 
-void gateInit() {
-  gateWired = (GATE_SERVO_PIN != PIN_NOT_WIRED);
-  if (!gateWired) {
-    Serial.println("Gate: GATE_SERVO_PIN not wired yet -- gate control disabled until Config.h has a real pin.");
-    gate_state = GateState::CLOSED; // already-settled so nothing downstream stalls waiting on it
-    return;
-  }
-  gateServo.attach(GATE_SERVO_PIN);
-  gateServo.write(GATE_CLOSE_ANGLE); // closed at boot -- nothing should fall out before the drop zone
-  gate_state = GateState::CLOSING;
-  gateStateEnteredAt = millis();
-  Serial.println("Gate Setup Complete");
-}
-
 void gateRequestOpen() {
-  if (!gateWired) return;
   if (gate_state == GateState::OPEN || gate_state == GateState::OPENING) return;
   gateServo.write(GATE_OPEN_ANGLE);
   gate_state = GateState::OPENING;
@@ -106,7 +96,6 @@ void gateRequestOpen() {
 }
 
 void gateRequestClose() {
-  if (!gateWired) return;
   if (gate_state == GateState::CLOSED || gate_state == GateState::CLOSING) return;
   gateServo.write(GATE_CLOSE_ANGLE);
   gate_state = GateState::CLOSING;
@@ -114,8 +103,7 @@ void gateRequestClose() {
 }
 
 void gateControlUpdate() {
-  if (!gateWired) return;
-  if (millis() - gateStateEnteredAt < GATE_MS) return;
+  if (millis() - gateStateEnteredAt < GATE_OPEN_HOLD_MS) return;
 
   if (gate_state == GateState::OPENING) {
     gate_state = GateState::OPEN;

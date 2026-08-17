@@ -29,9 +29,9 @@ enum class LiftState {
 };
 
 enum class GateState {
-  OPENING,  // commanded open, still within GATE_MS
+  OPENING,  // commanded open, still within GATE_OPEN_HOLD_MS
   OPEN,
-  CLOSING,  // commanded closed, still within GATE_MS
+  CLOSING,  // commanded closed, still within GATE_OPEN_HOLD_MS
   CLOSED
 };
 
