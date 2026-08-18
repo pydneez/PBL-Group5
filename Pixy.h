@@ -24,7 +24,7 @@ struct PixyDetection {
   int16_t x, y;                // block center, raw Pixy coordinates
   int16_t width, height;       // block bounding box, px
   int16_t offsetFromCenterX;   // x - PIXY_FRAME_CENTER_X; negative = left of center, positive = right
-  bool inPickupZone;           // true once x,y settle inside the PICKUP_ZONE_* window -- grabber trigger
+  bool inPickupZone;           // true once x,y,area settle inside the PICKUP_ZONE_* window -- grabber trigger
 };
 
 void pixyInit();

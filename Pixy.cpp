@@ -11,10 +11,14 @@ void pixyInit() {
 }
 
 // True once (x, y) is within PICKUP_ZONE_ALLOWANCE_{X,Y} of the pickup
-// target. See PICKUP_ZONE_TARGET_* in Config.h.
-static bool isInPickupZone(int16_t x, int16_t y) {
+// target and area is within PICKUP_ZONE_ALLOWANCE_AREA of the expected
+// single-cube area -- an oversized area means two cubes are sitting next
+// to each other and got merged into one blob, so it's rejected even if
+// x,y land inside the window. See PICKUP_ZONE_TARGET_* in Config.h.
+static bool isInPickupZone(int16_t x, int16_t y, uint32_t area) {
   return abs((int)x - PICKUP_ZONE_TARGET_X) <= PICKUP_ZONE_ALLOWANCE_X &&
-         abs((int)y - PICKUP_ZONE_TARGET_Y) <= PICKUP_ZONE_ALLOWANCE_Y;
+         abs((int)y - PICKUP_ZONE_TARGET_Y) <= PICKUP_ZONE_ALLOWANCE_Y &&
+         abs((int32_t)area - PICKUP_ZONE_TARGET_AREA) <= PICKUP_ZONE_ALLOWANCE_AREA;
 }
 
 // Outcome of scoring a single block in pixyDetect(), used for debug printing.
@@ -140,7 +144,7 @@ PixyDetection pixyDetect(PixyDetectMode mode) {
       best.width = width;
       best.height = height;
       best.offsetFromCenterX = (int16_t)x - PIXY_FRAME_CENTER_X;
-      best.inPickupZone = isInPickupZone(x, y);
+      best.inPickupZone = isInPickupZone(x, y, area);
       bestDistSq = distSq;
       bestIndex = i;
     }
