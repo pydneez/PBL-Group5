@@ -24,14 +24,14 @@
 // fixed-time drive -- retune down once the real distance-to-wall is known.
 #define DRIVE_MS    1000
 #define TURN_MS     800   
-#define BACK_MS     100   // how long to reverse from the wall
-#define CRUISE_SPEED 200
+#define BACK_MS    70   
+#define CRUISE_SPEED 220
 
 // Ceiling speed for the belt approach (APPROACH_BELT) 
 #define BELT_APPROACH_SPEED 65
 
 // Ceiling speed for the wall/dropzone approach (APPROACH_DROPZONE) --
-#define DROPZONE_APPROACH_SPEED -80 // backward
+#define DROPZONE_APPROACH_SPEED -200 // backward
 
 #define TURN_SPEED   150
 
@@ -41,18 +41,18 @@
 #define TRIG_BACK 30
 #define ECHO_BACK 31
 
-// Front distance (cm) at which the robot is close enough to the drop-off wall
-#define SONAR_DROPZONE_STOP_CM  12 
-#define SONAR_DROPZONE_SLOW_CM 30
-#define SONAR_BELT_STOP_CM  4
-#define SONAR_BELT_SLOW_CM 20
+#define SONAR_DROPZONE_STOP_CM  15
+#define SONAR_DROPZONE_SLOW_CM 50
+#define SONAR_DROPZONE_DEADBAND 5
 
+#define SONAR_BELT_STOP_CM  4
+#define SONAR_BELT_SLOW_CM 15
 #define SONAR_BELT_DEADBAND 1
-#define SONAR_WALL_DEADBAND 5
+
 
 // How long the distance must stay continuously inside the +/-
 // SONAR_BELT_DEADBAND window before commits to "reached". 
-#define SONAR_HOLD_MS 500
+#define SONAR_HOLD_MS 200
 
 // Floor PWM for the wall/belt approach 
 // (easing down as distance closes in, backup 
@@ -81,15 +81,10 @@
 // noise / specular glints (e.g. off the untrained white cube)
 #define PIXY_MIN_BLOCK_SIZE  8
 
-// Pickup-trigger window: camera is mounted at bearing 225, belt carries
-// cubes toward bearing 270, so a cube drifts through frame until it lines
-// up here -- that's the position DETECT_CUBE (PBL.ino) requires before
-// LIFT_DOWN fires. Target/allowance (not raw min/max) so the window is easy
-// to re-center once belt speed is known: currently x:60-70, y:114-116.
 #define PICKUP_ZONE_TARGET_X     127
 #define PICKUP_ZONE_TARGET_Y     127
 #define PICKUP_ZONE_ALLOWANCE_X  5
-#define PICKUP_ZONE_ALLOWANCE_Y  10
+#define PICKUP_ZONE_ALLOWANCE_Y  30
 
 // DETECT_CUBE (PBL.ino) requires this many consecutive frames reporting the
 // same pixyDetect(SEEK_CUBE) match before committing to LIFT_DOWN -- guards
@@ -100,22 +95,12 @@
 #define DETECT_CUBE_CONFIRM_FRAMES 1
 
 #define DETECT_CUBE_TIMEOUT_MS 10000
-#define GAME_TIMEOUT_MS 140000
+#define GAME_TIMEOUT_MS 160000
 
 // Carrier capacity: DETECT_CUBE loops back for another cube after each
 // successful pickup until this many are carried, then heads to the drop zone
 #define MAX_CARRIED_CUBES 3
 
-// LOCATE_DROPZONE requires this many consecutive frames reporting the
-// matching drop marker before trusting it -- same debounce reasoning as
-// DETECT_CUBE_CONFIRM_FRAMES.
-#define LOCATE_DROPZONE_CONFIRM_FRAMES 3
-
-// Safety net: how long LOCATE_DROPZONE scans for 
-// matching marker before giving up on THIS attempt. 
-// First timeout triggers a 180 recheck turn
-// 2nd timeout: proceeds to APPROACH_DROPZONE on the original heading 
-#define LOCATE_DROPZONE_TIMEOUT_MS 1000
 
 
 // ---------------- ENCODERS (LM393 IR slot sensor, single-channel) ----------------
@@ -317,8 +302,7 @@
 #define GATE_OPEN_ANGLE   45 
 #define GATE_CLOSE_ANGLE  0 // original position
 
-// How long TaskState::GATE_OPEN (PBL.ino) holds the gate open
-#define GATE_OPEN_HOLD_MS 1500
+#define GATE_OPEN_HOLD_MS 1200
 
 // ---------------- TORQUE SERVO (MG996R) ----------------
 #define LIFT_SERVO_PIN 35
@@ -328,4 +312,4 @@
 #define LIFT_DOWN_NUM 0
 
 
-#define LIFTER_MS 930
+#define LIFTER_MS 970
