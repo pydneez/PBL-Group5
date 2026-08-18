@@ -14,12 +14,12 @@ static bool needsSeed = true;
 // motors keep driving continuously instead of only moving on update ticks.
 static int outLF = 0, outLR = 0, outRF = 0, outRR = 0;
 
-// Last valid (non -1) front sonar reading seen during the current approach --
-// see driveControlCruiseToSonarStop()'s -1 handling below.
-static float lastValidFrontCm = -1;
+// Last valid (non -1) reading from whichever sonar the current
+// driveControlCruiseToSonarStop() call is using (front or back)
+static float lastValidDistCm = -1;
 
-// millis() timestamp the front distance most recently entered the
-// +/-SONAR_DEADBAND window, or 0 if it isn't currently inside it -- see the
+// millis() timestamp the distance most recently entered the
+// +/-SONAR_BELT_DEADBAND window, or 0 if it isn't currently inside it -- see the
 // hold-and-recheck logic in driveControlCruiseToSonarStop().
 static unsigned long deadbandEnteredAt = 0;
 
@@ -37,7 +37,7 @@ void driveControlReset() {
   pidReset(pidRF);
   pidReset(pidRR);
   needsSeed = true;
-  lastValidFrontCm = -1;
+  lastValidDistCm = -1;
   deadbandEnteredAt = 0;
 }
 
@@ -133,46 +133,47 @@ void driveControlStop() {
   delay(DRIVE_SETTLE_MS); // let residual momentum die out before the caller starts the next move
 }
 
-bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm, float slowCm) {
-  int frontCm = sonarGetFrontCm();
+bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm, float slowCm, float (*sonarGetCm)()) {
+  // Direction/magnitude split so every speed below 
+  // is derived from cruiseSpeed's own sign
+  // + forward / - backward
+  int dir = (cruiseSpeed >= 0) ? 1 : -1;
+  int cruiseMag = abs(cruiseSpeed);
 
-  if (frontCm > 0) {
-    lastValidFrontCm = frontCm;
+  int distCm = sonarGetCm();
+
+  if (distCm > 0) {
+    lastValidDistCm = distCm;
   } else {
-    // No echo this cycle. If we've never seen the wall inside slowCm yet,
-    // there's genuinely nothing confirmed ahead -- keep cruising. Once we
-    // HAVE been inside slowCm, treat a dropped reading as "close and
-    // unsure" and hold at the floor speed instead of assuming it's clear
-    // (a flaky close-range echo defaulting to "clear" is what let the
-    // approach slam into the wall at full speed before).
-    bool wasClose = (lastValidFrontCm > 0 && lastValidFrontCm < slowCm);
-    driveControlUpdateStraight(wasClose ? SONAR_FRONT_MIN_SPEED : cruiseSpeed);
+    bool wasClose = (lastValidDistCm > 0 && lastValidDistCm < slowCm);
+    driveControlUpdateStraight(wasClose ? dir * SONAR_FRONT_MIN_SPEED : cruiseSpeed);
     deadbandEnteredAt = 0; // lost the reading -- no longer a confirmed hold
     return false;
   }
 
-  bool inDeadband = (frontCm >= stopCm - SONAR_DEADBAND) && (frontCm <= stopCm + SONAR_DEADBAND);
+  bool inDeadband = (distCm >= stopCm - SONAR_BELT_DEADBAND) && (distCm <= stopCm + SONAR_BELT_DEADBAND);
 
   if (!inDeadband) {
     deadbandEnteredAt = 0; // any excursion outside the deadband resets the hold timer
 
-    if (frontCm < stopCm - SONAR_DEADBAND) {
-      // Overshot the stop distance -- back off gently
-      driveControlUpdateStraight(-SONAR_FRONT_MIN_SPEED);
+    if (distCm < stopCm - SONAR_BELT_DEADBAND) {
+      // Overshot the stop distance (too close) -- back off gently the
+      // opposite way from the approach direction.
+      driveControlUpdateStraight(-dir * SONAR_FRONT_MIN_SPEED);
       return false;
     }
 
-    int speed = cruiseSpeed;
-    if (frontCm < slowCm) {
-      float frac = (frontCm - stopCm) / (slowCm - stopCm);
+    int speedMag = cruiseMag;
+    if (distCm < slowCm) {
+      float frac = (distCm - stopCm) / (slowCm - stopCm);
       frac = constrain(frac, 0.0f, 1.0f);
-      speed = SONAR_FRONT_MIN_SPEED + (int)((cruiseSpeed - SONAR_FRONT_MIN_SPEED) * frac);
+      speedMag = SONAR_FRONT_MIN_SPEED + (int)((cruiseMag - SONAR_FRONT_MIN_SPEED) * frac);
     }
-    driveControlUpdateStraight(speed);
+    driveControlUpdateStraight(dir * speedMag);
     return false;
   }
 
-  // Inside the deadband -- hold at zero PWM (not the full decel/settle ramp yet) 
+  // Inside the deadband -- hold at zero PWM (not the full decel/settle ramp yet)
   //  Only commit to "reached" once it's held
   // steady for SONAR_HOLD_MS straight.
   if (deadbandEnteredAt == 0) {
@@ -183,7 +184,7 @@ bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm, float slowCm) 
   if (millis() - deadbandEnteredAt >= SONAR_HOLD_MS) {
     driveControlStop();
     deadbandEnteredAt = 0;
-    lastValidFrontCm = -1; // clean slate for the next approach
+    lastValidDistCm = -1; // clean slate for the next approach
     return true;
   }
 
@@ -297,12 +298,20 @@ void turnControlStart(float relativeDeg) {
   turnTargetHeading = wrap360(turnStartHeading + relativeDeg);
   turnTickStartMs = 0;
   turnNearMs = 0;
-  // So the first "Turn ticks" diagnostic sample reflects only this turn's
-  // motion, not leftover ticks from the previous state's stop ramp/settle.
+
   encoderResetAll();
   Serial.print("Turn start: heading="); Serial.print(turnStartHeading, 1);
   Serial.print(" target="); Serial.println(turnTargetHeading, 1);
-  logImuHealth("at turn start");
+}
+
+void turnControlStartAbsolute(float targetHeadingDeg) {
+  turnStartHeading = imuGetHeading();
+  turnTargetHeading = wrap360(targetHeadingDeg);
+  turnTickStartMs = 0;
+  turnNearMs = 0;
+  encoderResetAll();
+  Serial.print("Turn start (absolute): heading="); Serial.print(turnStartHeading, 1);
+  Serial.print(" target="); Serial.println(turnTargetHeading, 1);
 }
 
 // Prints how far the heading actually moved (vs. the requested relativeDeg from turnControlStart()) 
@@ -337,7 +346,6 @@ static bool finishTurn(const char* reason) {
   Serial.print("): heading="); Serial.print(finalHeading, 1);
   Serial.print(" turned="); Serial.print(turned, 1);
   Serial.println(" deg");
-  logImuHealth("at turn end");
   return true;
 }
 
@@ -366,7 +374,6 @@ bool turnControlUpdate(int pwm) {
     // Same cadence as the tick sample above -- catches calibration/magnetic
     // interference that only shows up once the motors are actually drawing
     // current mid-turn, not just at the (stationary) turn start.
-    logImuHealth("mid-turn");
   }
 
   float err = turnHeadingError(turnTargetHeading, imuGetHeading());
@@ -378,7 +385,7 @@ bool turnControlUpdate(int pwm) {
     return finishTurn("reached tolerance");
   }
 
-  if (dist <= TURN_HEADING_TOLERANCE_DEG * 2.5f) {
+  if (dist <= TURN_HEADING_TOLERANCE_DEG * 1.5f) {
     if (turnNearMs == 0) turnNearMs = millis();
     else if (millis() - turnNearMs >= TURN_NEAR_MS) {
       return finishTurn("settled near target");

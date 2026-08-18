@@ -12,7 +12,7 @@
 enum class TaskState {
   IMU_CALIBRATE,     // waiting for the BNO055 to report fully calibrated before anything else runs
   IDLE,              // waiting for a Serial start command
-  DRIVE_FORWARD_TO_CENTER,     // driving straight, open-loop; sonar polling starts after DRIVE_BEFORE_SONAR_MS
+  DRIVE_FORWARD_TO_CENTER,     // driving straight
   TURN_RIGHT_TO_BELT, // closed-loop 90 deg turn to face the belt
   TURN_LEFT_TO_BELT,         // closed-loop 90 deg turn against IMU heading
   APPROACH_BELT,     // driving straight at BELT_APPROACH_SPEED; stops within SONAR_BELT_STOP_CM
@@ -24,6 +24,7 @@ enum class TaskState {
   BACKWARD_FROM_BELT, 
   TURN_TO_DROPZONE,  // fixed turn: red -> left, green -> right
   LOCATE_DROPZONE,   // waiting for Pixy to confirm the matching drop-off marker
+  TURN_180_RECHECK_DROPZONE, // marker not found on the first look -- turn 180 and scan again
   APPROACH_DROPZONE,
   DROPPING_CUBE,     // stopped within SONAR_DROPZONE_STOP_CM; grabber not implemented yet
   DRIVE_BACKWARD_TO_CENTER,   // driving away from drop-off wall
@@ -43,15 +44,34 @@ enum class TaskState {
 // marker LOCATE_DROPZONE looks for. Cleared each time IDLE is (re)entered.
 CubeColor detectedCubeColor = CubeColor::NONE;
 
-// Counts completed round trips of the DRIVE_FORWARD_TO_CENTER<->DRIVE_BACKWARD_TO_CENTER PID
-// calibration shuttle. Reset to 0 when IDLE kicks off a fresh run.
-int driveTestRoundTrip = 0;
+int carriedCubeCount = 0;
+CubeColor carriedColor = CubeColor::NONE;
+
+bool approachedFromYellow = true;
+
+// True while the current LIFT_DOWN..GRIPPER_OPEN chain was kicked off by
+// DETECT_CUBE (the real belt pickup loop), false when it was kicked off
+// manually from IDLE's 'g' test key -- lets GRIPPER_OPEN tell the two
+// callers apart and only run the carry-count/loop-back logic for the real
+// pickup path.
+bool autoPickup = true;
+
+// True once TURN_180_RECHECK_DROPZONE has already been used for the current
+// drop-off leg -- LOCATE_DROPZONE only gets one recheck turn per leg before
+// it gives up and proceeds blind. Reset when TURN_TO_DROPZONE is (re)entered
+// and each time IDLE is (re)entered.
+bool dropzoneRecoveryUsed = false;
+
+// True only while TURN_180_RECHECK_DROPZONE is being used to turn back to
+// the original heading after a second miss, as opposed to its first use
+// (turning out to recheck the opposite side). Distinguishes the two so the
+// turn knows whether to send LOCATE_DROPZONE another look or go straight to
+// APPROACH_DROPZONE. Reset alongside dropzoneRecoveryUsed.
+bool dropzoneReturningFromRecheck = false;
 
 TaskState state = TaskState::IDLE;
 unsigned long stateEnteredAt = 0;
 
-// Written out manually so the IDE's auto-generated prototypes
-// (inserted above the enum) don't reference TaskState before it's defined.
 const char* stateName(TaskState s);
 void setState(TaskState newState);
 
@@ -71,6 +91,7 @@ const char* stateName(TaskState s) {
 
     case TaskState::TURN_TO_DROPZONE: return "TURN_TO_DROPZONE";
     case TaskState::LOCATE_DROPZONE:  return "LOCATE_DROPZONE";
+    case TaskState::TURN_180_RECHECK_DROPZONE: return "TURN_180_RECHECK_DROPZONE";
     case TaskState::APPROACH_DROPZONE: return "APPROACH_DROPZONE";
     case TaskState::DROPPING_CUBE:    return "DROPPING_CUBE";
     
@@ -81,7 +102,6 @@ const char* stateName(TaskState s) {
     case TaskState::GATE_OPEN: return "GATE_OPEN";
     case TaskState::GATE_CLOSE: return "GATE_CLOSE";
 
-    case TaskState::ENCODER_TEST: return "ENCODER_TEST";
     case TaskState::TURN_TEST: return "TURN_TEST";
     case TaskState::DRIVE_PID_TEST: return "DRIVE_PID_TEST";
     case TaskState::DRIVE_STRAIGHT_TEST: return "DRIVE_STRAIGHT_TEST";
@@ -97,6 +117,12 @@ void setState(TaskState newState) {
   Serial.println(stateName(state));
   if (state == TaskState::IDLE) {
     Serial.println("Type 'c' + Enter to recalibrate the IMU, or any other character + Enter to start...");
+    detectedCubeColor = CubeColor::NONE;
+    carriedCubeCount = 0;
+    carriedColor = CubeColor::NONE;
+    dropzoneRecoveryUsed = false;
+    dropzoneReturningFromRecheck = false;
+    approachedFromYellow = true;
   }
 }
 
@@ -192,8 +218,8 @@ void loop() {
         char c = Serial.read();
         while (Serial.available() > 0) Serial.read(); // drain the buffer
         if (c == 'c' || c == 'C') {
-          imuRestartCalibration();
-          setState(TaskState::IMU_CALIBRATE);
+          //imuRestartCalibration();
+          setState(TaskState::DETECT_CUBE);
         } else if (c == 't' || c == 'T') {
           setState(TaskState::TURN_TEST);
         } else if (c == 'l' || c == 'L') {
@@ -206,8 +232,12 @@ void loop() {
           setState(TaskState::DRIVE_FORWARD_TO_CENTER);
         } else if (c == 'b' || c == 'B') {
           setState(TaskState::DRIVE_BACKWARD_TO_CENTER);
-        } else if (c == 'g' || c == 'G') {
+        } else if (c == 'd' || c == 'D') {
           // Runs the full pickup cycle: lift down -> grab -> lift up -> release.
+          // Manual actuator test, not a real belt pickup -- autoPickup=false
+          // tells GRIPPER_OPEN to just return to IDLE instead of looping
+          // back for another cube.
+          autoPickup = false;
           setState(TaskState::LIFT_DOWN);
         } else if (c == 'i' || c == 'I') {
           setState(TaskState::IDLE);
@@ -217,6 +247,10 @@ void loop() {
           setState(TaskState::DRIVE_STRAIGHT_TEST);
         } else if (c == 'a' || c == 'A') {
           setState(TaskState::APPROACH_BELT);
+        } else if (c == 'g' || c == 'G') {
+          setState(TaskState::GATE_OPEN);
+        } else if (c == 'w' || c == 'W') {
+          setState(TaskState::APPROACH_DROPZONE);
         }
       }
       break;
@@ -234,12 +268,11 @@ void loop() {
 
       if (timeInState() >= DRIVE_MS) {
         driveControlStop();
-
-        // TURN_RIGHT to face the  belt
-        //if (runSingleTurn(90, lastEnteredAt)) {
-        //setState(TaskState::DETECT_CUBE);
-        setState(TaskState::TURN_RIGHT_TO_BELT);
-      
+        if (approachedFromYellow) {
+          setState(TaskState::TURN_RIGHT_TO_BELT);
+        } else {
+          setState(TaskState::TURN_LEFT_TO_BELT);
+        }
       }
       break;
     }
@@ -252,7 +285,7 @@ void loop() {
         driveControlReset();
       }
 
-      driveControlUpdate(-CRUISE_SPEED, -CRUISE_SPEED);
+      driveControlUpdateStraight(-CRUISE_SPEED);
 
       if (timeInState() >= DRIVE_MS) {
         driveControlStop();
@@ -285,19 +318,11 @@ void loop() {
         Serial.println(" cm");
       }
 
-
-
       // Cruises at BELT_APPROACH_SPEED, easing down as the front sonar closes in
-      bool reachedBelt = driveControlCruiseToSonarStop(BELT_APPROACH_SPEED, SONAR_BELT_STOP_CM, SONAR_BELT_SLOW_CM);
+      bool reachedBelt = driveControlCruiseToSonarStop(BELT_APPROACH_SPEED, SONAR_BELT_STOP_CM, SONAR_BELT_SLOW_CM, sonarGetFrontCm);
 
       if (reachedBelt) {
-        // Cube pickup: confirm a red/green cube is actually there -> lift
-        // down -> grab -> lift up -> release into the carrier (see
-        // DETECT_CUBE, then the LIFT_DOWN/GRIPPER_CLOSE/LIFT_UP/GRIPPER_OPEN
-        // chain).
-        //setState(TaskState::DETECT_CUBE);
-
-        setState(TaskState::IDLE);
+        setState(TaskState::DETECT_CUBE);
       }
       break;
     }
@@ -334,16 +359,15 @@ void loop() {
 
       if (millis() - lastPrintAt >= 200) {
         lastPrintAt = millis();
-        Serial.print("APPROACH_DROP_ZONE front sonar: ");
-        Serial.print(sonarGetFrontCm());
+        Serial.print("APPROACH_DROP_ZONE back sonar: ");
+        Serial.print(sonarGetBackCm());
         Serial.println(" cm");
       }
 
-      bool reachedDropOff = driveControlCruiseToSonarStop(DROPZONE_APPROACH_SPEED, SONAR_DROPZONE_STOP_CM, SONAR_DROPZONE_SLOW_CM);
+      bool reachedDropOff = driveControlCruiseToSonarStop(DROPZONE_APPROACH_SPEED, SONAR_DROPZONE_STOP_CM, SONAR_DROPZONE_SLOW_CM, sonarGetBackCm);
 
       if (reachedDropOff) {
-        //setState(TaskState::GATE_OPEN);
-        setState(TaskState::IDLE);
+        setState(TaskState::GATE_OPEN);
       }
       break;
     }
@@ -359,7 +383,7 @@ void loop() {
     case TaskState::TURN_180: {
       static unsigned long lastEnteredAt = 0;
       if (runSingleTurn(-180, lastEnteredAt)) {
-        setState(TaskState::IDLE);
+        setState(TaskState::GATE_OPEN);
       }
       break;
     }
@@ -371,7 +395,26 @@ void loop() {
         gripperRequestOpen();
       }
       if (gripperIsSettled()) {
-        setState(TaskState::IDLE);
+        if (autoPickup) {
+          // Cube just released into the carrier -- bank it, then either go
+          // back for another (same color, see DETECT_CUBE's lock) or head
+          // to the drop zone if the carrier's full.
+          carriedCubeCount++;
+          carriedColor = detectedCubeColor;
+          Serial.print("GRIPPER_OPEN: carrier now holds ");
+          Serial.print(carriedCubeCount);
+          Serial.print(" ");
+          Serial.println(carriedColor == CubeColor::RED ? "RED" : "GREEN");
+
+          if (carriedCubeCount < MAX_CARRIED_CUBES) {
+            setState(TaskState::DETECT_CUBE);
+          } else {
+            setState(TaskState::BACKWARD_FROM_BELT);
+          }
+        } else {
+          // Manual 'g' actuator test -- no belt loop to return to.
+          setState(TaskState::IDLE);
+        }
       }
       break;
     }
@@ -419,10 +462,6 @@ void loop() {
         lastEnteredAt = stateEnteredAt;
         gateRequestOpen();
       }
-      // Matches the sketch's "time_entered > OPEN_TIME" condition directly --
-      // not gated on gateIsSettled(), since GATE_OPEN_HOLD_MS is meant to
-      // cover the cube actually sliding/falling out, not just the servo
-      // finishing its own GATE_MS travel time.
       if (timeInState() >= GATE_OPEN_HOLD_MS) {
         setState(TaskState::GATE_CLOSE);
       }
@@ -436,37 +475,44 @@ void loop() {
         gateRequestClose();
       }
       if (gateIsSettled()) {
-        // Reuses DRIVE_BACKWARD_TO_CENTER -- its own comment already says "driving
-        // away from drop-off wall", and DROPPING_CUBE already routes here
-        // for the same reason.
-        setState(TaskState::DRIVE_BACKWARD_TO_CENTER);
+        // Cubes are out of the carrier -- clear the carried/detected state
+        // before heading back for the next batch, so DETECT_CUBE's color
+        // lock and GRIPPER_OPEN's carriedCubeCount check start fresh.
+        detectedCubeColor = CubeColor::NONE;
+        carriedCubeCount = 0;
+        carriedColor = CubeColor::NONE;
+        setState(TaskState::DRIVE_FORWARD_TO_CENTER);
       }
       break;
     }
 
     case TaskState::DETECT_CUBE: {
-      // Stay put while scanning -- SEEK_CUBE already picks the single
-      // largest matching (red/green) block itself (Pixy.cpp's scoring
-      // loop), so no centering/position check is needed here: the camera
-      // is mounted off the robot's centerline anyway (doesn't line up with
-      // the gripper), so "centered in frame" wouldn't mean "in reach" even
-      // if we checked it.
       stopAll();
 
       static unsigned long lastEnteredAt = 0;
       static int consecutiveMatches = 0;
+      static bool announcedExtendedWait = false;
       if (stateEnteredAt != lastEnteredAt) {
         lastEnteredAt = stateEnteredAt;
         consecutiveMatches = 0;
+        announcedExtendedWait = false;
         Serial.println("DETECT_CUBE: waiting for a red/green cube...");
       }
 
       PixyDetection d = pixyDetect(PixyDetectMode::SEEK_CUBE);
-      if (d.found) {
+      // Carrier already holds a color -- reject a different one outright 
+      if (d.found && carriedCubeCount > 0 && d.color != carriedColor) {
+        d.found = false;
+      }
+      // Only count frames where the cube has actually drifted into the
+      // PICKUP_ZONE_* window (Pixy.h/Config.h) -- being seen isn't enough,
+      // it has to be in reach of the gripper before LIFT_DOWN fires.
+      if (d.found && d.inPickupZone) {
         consecutiveMatches++;
         Serial.print("DETECT_CUBE: candidate ");
         Serial.print(d.color == CubeColor::RED ? "RED" : "GREEN");
-        Serial.print(" area="); Serial.print((long)d.width * d.height);
+        Serial.print(" x="); Serial.print(d.x);
+        Serial.print(" y="); Serial.print(d.y);
         Serial.print(" consecutive="); Serial.println(consecutiveMatches);
       } else {
         consecutiveMatches = 0;
@@ -474,41 +520,106 @@ void loop() {
 
       if (consecutiveMatches >= DETECT_CUBE_CONFIRM_FRAMES) {
         detectedCubeColor = d.color;
+        autoPickup = true;
+        setState(TaskState::LIFT_DOWN);
         Serial.print("DETECT_CUBE: confirmed ");
         Serial.println(detectedCubeColor == CubeColor::RED ? "RED" : "GREEN");
-        setState(TaskState::LIFT_DOWN);
-      } else if (timeInState() >= DETECT_CUBE_TIMEOUT_MS) {
+      } else if (carriedCubeCount > 0 && timeInState() >= DETECT_CUBE_TIMEOUT_MS) {
+        // Already holding at least one cube of carriedColor
+        // -- settle for what we've got
+        Serial.print("DETECT_CUBE: timed out, but carrying ");
+        Serial.print(carriedCubeCount);
+        Serial.println(" cube(s) already -- heading to drop-off.");
+        setState(TaskState::BACKWARD_FROM_BELT);
+
+      } else if (carriedCubeCount == 0 && timeInState() >= GAME_TIMEOUT_MS) {
+        // Carrying nothing even after the full extended wait -- truly give up.
         Serial.println("DETECT_CUBE: timed out waiting for a cube -- returning to IDLE");
         setState(TaskState::IDLE);
+
+      } else if (carriedCubeCount == 0 && timeInState() >= DETECT_CUBE_TIMEOUT_MS && !announcedExtendedWait) {
+        // Carrying nothing -- the short per-attempt timeout doesn't apply
+        // (nothing to "settle for"), so just keep scanning up to
+        // GAME_TIMEOUT_MS instead of bailing to IDLE empty-handed.
+        announcedExtendedWait = true;
+        Serial.println("DETECT_CUBE: no cube seen yet and carrying nothing -- extending wait.");
       }
       break;
     }
 
     case TaskState::TURN_TO_DROPZONE: {
+      // turning toward the color actually sitting in the carrier (carriedColor),
       static unsigned long lastEnteredAt = 0;
-      if (runSingleTurn(detectedCubeColor == CubeColor::RED ? -90 : 90, lastEnteredAt)) {
-        setState(TaskState::LOCATE_DROPZONE);
+      if (stateEnteredAt != lastEnteredAt) {
+        // fresh drop-off leg gets its own recheck attempt
+        dropzoneRecoveryUsed = false;
+        dropzoneReturningFromRecheck = false;
+      }
+      if (runSingleTurn(carriedColor == CubeColor::RED ? 90 : -90, lastEnteredAt)) {
+        approachedFromYellow = (carriedColor != CubeColor::RED);
+        setState(TaskState::APPROACH_DROPZONE);
+        //setState(TaskState::LOCATE_DROPZONE);
       }
       break;
     }
 
     case TaskState::LOCATE_DROPZONE: {
-      stopAll(); // stay put while confirming the marker; only Pixy is polled here
-
-      setState(TaskState::APPROACH_DROPZONE);     
-    }
-
-    
-    case TaskState::DROPPING_CUBE: {
+      // Stay put while scanning, same reasoning as DETECT_CUBE -- this is a
+      // confirmation step, not a search, so there's nothing to steer toward.
       stopAll();
+
       static unsigned long lastEnteredAt = 0;
+      static int consecutiveMatches = 0;
       if (stateEnteredAt != lastEnteredAt) {
         lastEnteredAt = stateEnteredAt;
-        Serial.println("Cube is dropping");
-        gripperRequestOpen();
+        consecutiveMatches = 0;
+        Serial.print("LOCATE_DROPZONE: scanning for ");
+        Serial.print(carriedColor == CubeColor::RED ? "GREEN (opposite side of Target)" : "RED (opposite side of Target)");
+        Serial.println(" marker...");
       }
-      if (gripperIsSettled()) {
-        setState(TaskState::DRIVE_BACKWARD_TO_CENTER);
+
+      // since we're backing into the drop zone -> we will detect the opposite colour
+      PixyDetectMode mode = (carriedColor == CubeColor::RED) ? PixyDetectMode::SEEK_GREEN_DROP : PixyDetectMode::SEEK_RED_DROP;
+      PixyDetection d = pixyDetect(mode);
+      if (d.found) {
+        consecutiveMatches++;
+      } else {
+        consecutiveMatches = 0;
+      }
+
+      if (consecutiveMatches >= LOCATE_DROPZONE_CONFIRM_FRAMES) {
+        Serial.println("LOCATE_DROPZONE: marker confirmed -- approaching.");
+        setState(TaskState::APPROACH_DROPZONE);
+      } else if (timeInState() >= LOCATE_DROPZONE_TIMEOUT_MS) {
+        if (!dropzoneRecoveryUsed) {
+          // First miss -- could just be a wrong turn (drift, slip). 
+          // Flip aound
+          Serial.println("LOCATE_DROPZONE: marker not found -- turning 180 to recheck.");
+          dropzoneRecoveryUsed = true;
+          setState(TaskState::TURN_180_RECHECK_DROPZONE);
+        } else {
+          // Second miss, at the flipped (recheck) heading -- neither side
+          // confirmed. Turn back to the original fixed-turn heading (the
+          // intended/designed direction) before proceeding blind, rather
+          // than approach from the unconfirmed flipped heading we happen
+          // to be sitting at.
+          Serial.println("LOCATE_DROPZONE: marker still not found after recheck -- turning back to proceed blind.");
+          dropzoneReturningFromRecheck = true;
+          setState(TaskState::TURN_180_RECHECK_DROPZONE);
+        }
+      }
+      break;
+    }
+
+    case TaskState::TURN_180_RECHECK_DROPZONE: {
+      static unsigned long lastEnteredAt = 0;
+      if (runSingleTurn(180, lastEnteredAt)) {
+        // this assume we will never miss twice !!!!!
+
+        // Second use (returning from the recheck flip) heads straight to
+        // APPROACH_DROPZONE; first use (flipping out to recheck) goes back
+        // to LOCATE_DROPZONE for a second scan.
+        setState(dropzoneReturningFromRecheck ? TaskState::APPROACH_DROPZONE : TaskState::LOCATE_DROPZONE);
       }
       break;
     }
@@ -612,37 +723,6 @@ void loop() {
       break;
     }
 
-    case TaskState::ENCODER_TEST: {
-      static unsigned long lastPrintAt = 0;
-      static unsigned long lastEnteredAt = 0;
-      if (stateEnteredAt != lastEnteredAt) {
-        lastEnteredAt = stateEnteredAt;
-        encoderResetAll();
-        lastPrintAt = millis();
-      }
-
-      driveForward();
-
-      if (millis() - lastPrintAt >= ENCODER_PRINT_INTERVAL_MS) {
-        lastPrintAt = millis();
-        Serial.print("Ticks/interval  LF:");
-        Serial.print(encoderGetAndResetTicks(WheelId::LEFT_FRONT));
-        Serial.print("  LR:");
-        Serial.print(encoderGetAndResetTicks(WheelId::LEFT_REAR));
-        Serial.print("  RF:");
-        Serial.print(encoderGetAndResetTicks(WheelId::RIGHT_FRONT));
-        Serial.print("  RR:");
-        Serial.println(encoderGetAndResetTicks(WheelId::RIGHT_REAR));
-      }
-
-      if (timeInState() >= ENCODER_TEST_MS) {
-        stopAll();
-        setState(TaskState::GRIPPER_OPEN);
-      }
-      break;
-    }
-
-
   }
 
   // Runs every tick regardless of which TaskState is active, so a gripper
@@ -651,10 +731,4 @@ void loop() {
   gripperControlUpdate();
   liftControlUpdate();
   gateControlUpdate();
-
-  // Add an emergency stop that works from ANY TaskState:
-  if (digitalRead(A0) == HIGH) {   // example: a bumper switch on A0
-    stopAll();
-    setState(TaskState::IDLE);
-  }
 }

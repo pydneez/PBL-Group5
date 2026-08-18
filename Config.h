@@ -1,8 +1,8 @@
 #pragma once
 
 // ---------------- MOTOR PINS ----------------
-#define PIN_L_IN1  24   // left front direction 
-#define PIN_L_IN2  25
+#define PIN_L_IN1  25   // left front direction 
+#define PIN_L_IN2  24
 #define PIN_L_IN3  23   // left rear direction 
 #define PIN_L_IN4  22
 #define PIN_L_FRONT  12    // left front speed (PWM)
@@ -12,8 +12,8 @@
 #define PIN_R_IN2  29
 #define PIN_R_IN3  26   // right rear direction 
 #define PIN_R_IN4  27
-#define PIN_R_FRONT  10    // right front speed (PWM)
-#define PIN_R_REAR  11    // right rear speed (PWM)
+#define PIN_R_FRONT  8    // right front speed (PWM)
+#define PIN_R_REAR  9    // right rear speed (PWM)
 
 // ---------------- TIMING / SPEED ----------------
 // Safety-net max drive time for DRIVE_FORWARD_TO_CENTER -- the sonar (see
@@ -22,28 +22,46 @@
 // forever. Must stay well above DRIVE_BEFORE_SONAR_MS or the timeout fires
 // before sonar polling even starts. Was 900ms when this was purely a
 // fixed-time drive -- retune down once the real distance-to-wall is known.
-#define DRIVE_MS    900 // beore it was 900 until the center
-#define TURN_MS     800   // unused now that turns are closed-loop against IMU heading (see TURN_* below)
-#define BACK_MS     1500   // how long to reverse
-#define CRUISE_SPEED 180
+#define DRIVE_MS    1000
+#define TURN_MS     800   
+#define BACK_MS     100   // how long to reverse from the wall
+#define CRUISE_SPEED 200
 
-// Ceiling speed for the wall/belt approach -- eased down to
-// SONAR_FRONT_MIN_SPEED as the front sonar closes in (see
-// driveControlCruiseToSonarStop()). Must stay above SONAR_FRONT_MIN_SPEED or
-// the ease-down math inverts. Placeholder above the measured stall floor --
-// retune once real approach behavior is characterized.
-#define APPROACH_SPEED 90
-#define TURN_SPEED   100
+// Ceiling speed for the belt approach (APPROACH_BELT) 
+#define BELT_APPROACH_SPEED 65
 
-// Number of forward/backward round trips the DRIVE_FORWARD_TO_CENTER<->DRIVE_BACKWARD
-// PID calibration shuttle runs before returning to IDLE. 
-// Net displacement stays near zero each round trip 
-#define DRIVE_TEST_REPEATS 2
+// Ceiling speed for the wall/dropzone approach (APPROACH_DROPZONE) --
+#define DROPZONE_APPROACH_SPEED -80 // backward
 
+#define TURN_SPEED   150
+
+// ---------------- SONAR / ULTRASONIC ----------------
+#define TRIG_FRONT 38
+#define ECHO_FRONT 39
+#define TRIG_BACK 30
+#define ECHO_BACK 31
+
+// Front distance (cm) at which the robot is close enough to the drop-off wall
+#define SONAR_DROPZONE_STOP_CM  12 
+#define SONAR_DROPZONE_SLOW_CM 30
+#define SONAR_BELT_STOP_CM  4
+#define SONAR_BELT_SLOW_CM 20
+
+#define SONAR_BELT_DEADBAND 1
+#define SONAR_WALL_DEADBAND 5
+
+// How long the distance must stay continuously inside the +/-
+// SONAR_BELT_DEADBAND window before commits to "reached". 
+#define SONAR_HOLD_MS 500
+
+// Floor PWM for the wall/belt approach 
+// (easing down as distance closes in, backup 
+// if it overshoots past STOP_CM - SONAR_BELT_DEADBAND).
+#define SONAR_FRONT_MIN_SPEED    60
 
 // ---------------- PIXY2 CAMERA ----------------
 // Set to 1 to print per-block detection details (signature/position/size/
-// score) to Serial each frame; 0 for silent normal operation.
+// distance-to-pickup-zone) to Serial each frame; 0 for silent normal operation.
 #define PIXY_DEBUG_PRINT_BLOCKS 0
 
 // x:0-315, y:0-207 range
@@ -55,20 +73,23 @@
 
 // Trained signature IDs (taught in PixyMon)
 #define PIXY_SIG_RED         1   // red cube
-#define PIXY_SIG_GREEN       2   // green cube
-#define PIXY_SIG_DROP_RED    3   // red drop-off zone marker
-#define PIXY_SIG_DROP_GREEN  4   // green drop-off zone marker
+#define PIXY_SIG_GREEN       4   // green cube
+#define PIXY_SIG_DROP_RED    7   // purple marker 
+#define PIXY_SIG_DROP_GREEN  2   // yellow marker 
 
 // Reject blocks smaller than this (px) on either axis: filters camera
 // noise / specular glints (e.g. off the untrained white cube)
 #define PIXY_MIN_BLOCK_SIZE  8
 
-// Added to a GREEN candidate's bounding-box area when SEEK_CUBE scores
-// red vs. green (green cubes are worth more at the drop-off, see
-// Pixy.cpp's scoring comment). 0 = no priority, pure largest/closest-wins
-// (today's behavior). Tune upward once real cube sizes are known from
-// PixyMon/Serial.
-#define CUBE_GREEN_BONUS_AREA 0
+// Pickup-trigger window: camera is mounted at bearing 225, belt carries
+// cubes toward bearing 270, so a cube drifts through frame until it lines
+// up here -- that's the position DETECT_CUBE (PBL.ino) requires before
+// LIFT_DOWN fires. Target/allowance (not raw min/max) so the window is easy
+// to re-center once belt speed is known: currently x:60-70, y:114-116.
+#define PICKUP_ZONE_TARGET_X     127
+#define PICKUP_ZONE_TARGET_Y     127
+#define PICKUP_ZONE_ALLOWANCE_X  5
+#define PICKUP_ZONE_ALLOWANCE_Y  10
 
 // DETECT_CUBE (PBL.ino) requires this many consecutive frames reporting the
 // same pixyDetect(SEEK_CUBE) match before committing to LIFT_DOWN -- guards
@@ -76,50 +97,26 @@
 // triggering a real mechanical grab. Not yet measured against a real false-
 // positive rate; lower if this feels sluggish to react, raise if it commits
 // on noise.
-#define DETECT_CUBE_CONFIRM_FRAMES 3
+#define DETECT_CUBE_CONFIRM_FRAMES 1
 
-// Safety net: if no cube is confirmed within this long, DETECT_CUBE gives up
-// and returns to IDLE rather than sitting at the belt forever waiting on a
-// Pixy misread or an empty belt. Placeholder -- retune once real belt
-// cube-arrival timing is known.
-#define DETECT_CUBE_TIMEOUT_MS 4000
+#define DETECT_CUBE_TIMEOUT_MS 10000
+#define GAME_TIMEOUT_MS 140000
 
-// ---------------- SONAR / ULTRASONIC ----------------
-#define TRIG_FRONT 38
-#define ECHO_FRONT 39
-#define TRIG_LEFT 46
-#define ECHO_LEFT 47
-#define TRIG_RIGHT 44   
-#define ECHO_RIGHT 45  
+// Carrier capacity: DETECT_CUBE loops back for another cube after each
+// successful pickup until this many are carried, then heads to the drop zone
+#define MAX_CARRIED_CUBES 3
 
-// Front distance (cm) at which the robot is close enough to the drop-off wall
-#define SONAR_DROPZONE_STOP_CM  15 
-#define SONNAR_DROPZONE_SLOW_CM 25
-#define SONAR_BELT_STOP_CM  4
-#define SONAR_BELT_SLOW_CM 10
+// LOCATE_DROPZONE requires this many consecutive frames reporting the
+// matching drop marker before trusting it -- same debounce reasoning as
+// DETECT_CUBE_CONFIRM_FRAMES.
+#define LOCATE_DROPZONE_CONFIRM_FRAMES 3
 
-#define SONAR_DEADBAND 2
+// Safety net: how long LOCATE_DROPZONE scans for 
+// matching marker before giving up on THIS attempt. 
+// First timeout triggers a 180 recheck turn
+// 2nd timeout: proceeds to APPROACH_DROPZONE on the original heading 
+#define LOCATE_DROPZONE_TIMEOUT_MS 1000
 
-// How long the front distance must stay continuously inside the +/-
-// SONAR_DEADBAND window before driveControlCruiseToSonarStop() commits to
-// "reached" (full decel-ramp stop, return true). Any excursion back outside
-// the deadband resets this timer. Guards against committing on a single
-// lucky reading that's about to drift back out -- see the hold logic there.
-#define SONAR_HOLD_MS 300
-
-// Floor PWM for the wall/belt approach (both forward, easing down as
-// distance closes in, and the gentle backup if it overshoots past
-// STOP_CM - SONAR_DEADBAND).\ 
-// 60 was enough to get all four turning together from 0. 
-// If a wheel is dragging during a slow approach, raise this before touching anything else.
-#define SONAR_FRONT_MIN_SPEED    65
-
-// Measured side clearance (cm) when the robot is centered in the drop-off wall
-#define SONAR_SIDE_CENTER_CM    25
-
-// Placeholder: how long to drive straight (open-loop, no PID yet) before the
-// front sonar starts being polled. Retune once PID/speed is characterized.
-#define DRIVE_BEFORE_SONAR_MS  500
 
 // ---------------- ENCODERS (LM393 IR slot sensor, single-channel) ----------------
 // must be attachInterrupt()-capable on your board (e.g. on a Mega2560: 2, 3, 18, 19, 20, 21)
@@ -138,11 +135,17 @@
 #define DRIVE_PID_INTERVAL_MS 100
 // (straight-line only -- turns will use IMU heading instead) 
 
-// Target ticks-per-interval at CRUISE_SPEED (150 PWM) -- placeholder derived
-// from the clean (pre-wall) portion of a real DRIVE_FORWARD_TO_CENTER run under active
-// PID (LF 46.0, LR 44.0, RF 62.1, RR 53.6 avg -- overall ~51). Retune as more
-// runs come in.
-#define DRIVE_PID_TARGET_TICKS_PER_INTERVAL 51
+// Target ticks-per-interval at CRUISE_SPEED (200 PWM) -- EXTRAPOLATED, not
+// directly measured. Every DRIVE_PID_TEST run so far ended up saturated
+// near ~250 actual PWM (200 requested against an unreachable target, then
+// 250 requested outright), so no run has actually sampled tick rate at a
+// genuinely unsaturated 200 PWM yet. This value is that ~250-PWM data
+// (overall avg ~12.4 ticks/interval; left side ~14.4, right side ~10.3 --
+// see CRUISE_SPEED comment) scaled down linearly by 200/250. Treat it as a
+// starting point: rerun DRIVE_PID_TEST now that there's real headroom, check
+// that "o:" settles near 200 without pinning at a rail, and retune this
+// constant from that real reading.
+#define DRIVE_PID_TARGET_TICKS_PER_INTERVAL 10
 
 // Gains are NOT tuned -- same placeholder status as PID.h's comment describes.
 #define DRIVE_PID_KP 2.0f
@@ -155,7 +158,7 @@
 
 // Below this commanded |PWM|, the tick-rate PID is skipped and the wheel
 // drives open-loop at baseSpeed instead. DRIVE_PID_TARGET_TICKS_PER_INTERVAL
-// was measured at CRUISE_SPEED, not at the APPROACH_SPEED/SONAR_FRONT_MIN_SPEED
+// was measured at CRUISE_SPEED, not at the BELT_APPROACH_SPEED/SONAR_FRONT_MIN_SPEED
 // range, so the PID saw permanent error there and pinned its correction at
 // +DRIVE_PID_MAX_CORRECTION for the whole approach -- e.g. commanding 10
 // actually drove ~60, which is why APPROACH_BELT kept hitting the wall
@@ -197,17 +200,13 @@
 #define IMU_SDA_PIN 20
 #define IMU_SCL_PIN 21
 
-#define BNO055_I2C_ADDR   0x29   
+#define BNO055_I2C_ADDR   0x28   
 #define BNO055_SENSOR_ID  55     
 
 #define IMU_EEPROM_CALIB_ADDR 0
 
 // Safety net: if full calibration (sys/gyro/accel/mag all == 3) isn't
-// reached within this long, IMU_CALIBRATE gives up waiting and proceeds
-// anyway on whatever calibration it has (typically EEPROM-restored offsets
-// from a prior session) rather than hanging the whole run. A full
-// from-scratch calibration (no EEPROM data yet) should be done ahead of a
-// match, not relied on to finish within this window.
+// reached within this long, IMU_CALIBRATE gives up waiting and proceeds anyway
 #define IMU_CALIBRATE_TIMEOUT_MS 10000
 
 // ---------------- TURN CONTROL (closed-loop against IMU heading) ----------------
@@ -229,28 +228,7 @@
 // it off.
 #define TURN_TIMEOUT_MS 1400
 
-// PWM floor applied while ramping down near the target, so friction can't
-// stall the turn before it reaches tolerance.
-//
-// Was 80, but logged data showed that stalling outright: per-wheel encoder
-// ticks during a real turn went to 0 on ALL FOUR wheels for 1.5+ seconds
-// once the ramp pinned PWM at 80 (dist ~10deg, inside TURN_RAMP_SPAN_DEG),
-// eventually hitting TURN_TIMEOUT_MS instead of ever reaching tolerance --
-// not a startup/breakaway issue (the kick phase clearly worked; ticks were
-// healthy for the first ~1.3s), just insufficient torque to sustain motion
-// at that PWM under real load. Was then raised to 150 when TURN_SPEED was
-// still 200, which worked as a floor (below cruise). But TURN_SPEED has
-// since dropped to 100 and this wasn't revisited -- at 150 the "floor" was
-// actually 50% ABOVE cruise speed, so the ramp zone sped the turn up right
-// before the tolerance check instead of slowing it down, guaranteeing an
-// overshoot (measured: 90deg turn overshot to 131.6deg before timing out).
-// Dropped back below TURN_SPEED so the ramp is a real deceleration again --
-// but 70 turned out to be back in the stalling range documented above
-// (measured: RR ticks hit 0, LR near 0, heading went flat/no-coast in the
-// settle trace, and the turn only ended via TURN_TIMEOUT_MS, not tolerance).
-// Split the difference between "stalls" (<=80) and "too fast to decelerate"
-// (>=TURN_SPEED=100).
-#define TURN_PWM_FLOOR 70
+#define TURN_PWM_FLOOR 90
 
 // Degrees of remaining error at which PWM starts ramping down toward
 // TURN_PWM_FLOOR. Deliberately NOT derived from TURN_HEADING_TOLERANCE_DEG
@@ -269,7 +247,7 @@
 // the difference between that and the 45 which risked stalling at the old
 // floor=90 -- watch tick counts on retest for the stall signature (any
 // wheel dropping to 0) if this still isn't enough runway.
-#define TURN_RAMP_SPAN_DEG 30
+#define TURN_RAMP_SPAN_DEG 50
 
 // Per-wheel PWM multiplier applied ONLY during turning (driveSides()/
 // straight driving is unaffected). Compensates for a wheel contributing
@@ -288,29 +266,17 @@
 #define TURN_SCALE_RF 1.0f
 #define TURN_SCALE_RR 1.0f
 
-// At the very start of a turn, drive at TURN_KICK_PWM (unconditionally,
-// overriding the ramp) for this long -- a brief full-power burst to
-// guarantee every wheel actually breaks static friction and starts moving
-// together, instead of the front-right wheel occasionally stalling
-// (motor audibly spinning, wheel not turning) at a lower starting PWM and
-// becoming a fixed pivot point while the other three sweep around it.
-// Bounded by the same tolerance/near/timeout checks as normal turning, so
-// it can't drive past target even for a very small relativeDeg.
-//
-// TURN_KICK_PWM was 255 (max) but that produced a worse regression: ALL
-// FOUR wheels stalling (motors audibly running, no wheel movement) on right
-// turns specifically -- consistent with a voltage brownout from commanding
-// every motor to full power simultaneously, not a friction issue (a corner-
-// weight imbalance would affect at most 2 wheels, not all 4). Backed off to
-// something still above TURN_SPEED but well short of max while this is
-// being diagnosed -- lower further if the stall persists.
-//
-// Was 200 against TURN_SPEED=200, i.e. no burst at all above cruise. Once
-// TURN_SPEED dropped to 100 this became a 2x burst that was never re-tuned,
-// adding to the overshoot alongside TURN_PWM_FLOOR (see that comment).
-// Halved to stay a real-but-smaller burst above the new cruise speed.
-#define TURN_KICK_MS 160
-#define TURN_KICK_PWM 130
+
+// Must stay above TURN_SPEED/TURN_PWM_FLOOR or it isn't a "burst" at all --
+// was dropped to 70ms/80 PWM (below the 150 PWM cruise) alongside the
+// TURN_SPEED bump to 150, which silently defeated it: logged turns now
+// start with a full 150ms window of 0 ticks on all four wheels (stalled),
+// eating into TURN_TIMEOUT_MS and undershooting. Restored proportional to
+// the old 160ms/130 PWM kick (which worked at TURN_SPEED=100) scaled up for
+// the new cruise speed -- retest and watch the first "Turn ticks" sample
+// for any wheel still at/near 0.
+#define TURN_KICK_MS 150
+#define TURN_KICK_PWM 200
 
 // Once a turn reaches tolerance, motors cut immediately (unlike
 // driveControlStop()'s ramp) -- a turn's target IS the angle, so continuing
@@ -339,7 +305,7 @@
 // ---------------- GRIPPER SERVO (MG90) ----------------
 #define GRIPPER_SERVO_PIN 34
 #define GRIPPER_OPEN_ANGLE   180 // original position dont change!!!!!
-#define GRIPPER_CLOSE_ANGLE  65
+#define GRIPPER_CLOSE_ANGLE  100
 //#define GRIPPER_MS  1185
 #define GRIPPER_MS  750
 
@@ -347,17 +313,19 @@
 #define PIN_NOT_WIRED -1
 
 // ---------------- BOX GATE SERVO (releases carried cube(s) at the drop zone) ----------------
-#define GATE_SERVO_PIN PIN_NOT_WIRED
-#define GATE_OPEN_ANGLE   180 // original position
-#define GATE_CLOSE_ANGLE  120 // PLACEHOLDER -> still need to figure out
-#define GATE_MS  750
+#define GATE_SERVO_PIN 36
+#define GATE_OPEN_ANGLE   45 
+#define GATE_CLOSE_ANGLE  0 // original position
 
-// How long TaskState::GATE_OPEN (PBL.ino) holds the gate open at the drop
-// zone before moving
+// How long TaskState::GATE_OPEN (PBL.ino) holds the gate open
 #define GATE_OPEN_HOLD_MS 1500
 
 // ---------------- TORQUE SERVO (MG996R) ----------------
 #define LIFT_SERVO_PIN 35
-#define LIFT_UP_ANGLE 200
-#define LIFT_DOWN_ANGLE 0
-#define LIFTER_MS 780
+// real value
+#define LIFT_STOP 90
+#define LIFT_UP_NUM 180
+#define LIFT_DOWN_NUM 0
+
+
+#define LIFTER_MS 930

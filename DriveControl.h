@@ -33,31 +33,37 @@ void driveControlUpdate(int leftSpeed, int rightSpeed);
 // path, which needs to stay instant.
 void driveControlStop();
 
-// Drives straight ahead (via driveControlUpdateStraight) while polling the
-// front sonar every call. Four zones, keyed off stopCm/slowCm and
-// SONAR_DEADBAND (Config.h):
-//   - closer than stopCm - SONAR_DEADBAND: overshot -- gentle backup at
-//     -SONAR_FRONT_MIN_SPEED instead of grinding into the wall.
-//   - within +/- SONAR_DEADBAND of stopCm: holds at zero PWM and starts a
+// Drives straight (via driveControlUpdateStraight) while polling
+// sonarGetCm() every call -- pass sonarGetFrontCm for a forward approach
+// (cruiseSpeed >= 0) or sonarGetBackCm for a reverse approach (cruiseSpeed <
+// 0). Every internal speed is derived from cruiseSpeed's own sign/magnitude,
+// not hardcoded to forward, so the same deadband/hold state machine works
+// for both. Four zones, keyed off stopCm/slowCm and SONAR_BELT_DEADBAND
+// (Config.h):
+//   - closer than stopCm - SONAR_BELT_DEADBAND: overshot (too close) --
+//     gentle backup at SONAR_FRONT_MIN_SPEED in the opposite direction from
+//     cruiseSpeed, instead of grinding into the wall.
+//   - within +/- SONAR_BELT_DEADBAND of stopCm: holds at zero PWM and starts a
 //     SONAR_HOLD_MS timer; any reading that drifts back outside the
 //     deadband before the timer elapses cancels the hold and falls back to
 //     the backup/approach zones above -- only a reading that stays inside
 //     the deadband continuously for SONAR_HOLD_MS commits to "reached".
-//   - between stopCm+SONAR_DEADBAND and slowCm: still approaching -- speed
-//     eases linearly from cruiseSpeed down to SONAR_FRONT_MIN_SPEED.
+//   - between stopCm+SONAR_BELT_DEADBAND and slowCm: still approaching -- speed
+//     eases linearly from cruiseSpeed down to SONAR_FRONT_MIN_SPEED (same
+//     direction as cruiseSpeed).
 //   - beyond slowCm: full cruiseSpeed.
 // A -1 reading (no echo -- see Sonar.h) is treated as "keep cruising" only
-// before the front distance has ever been seen inside slowCm; once it has,
-// a dropped reading means "close and unsure", so this holds at
-// SONAR_FRONT_MIN_SPEED instead of assuming the way is clear (and cancels
-// any in-progress deadband hold).
+// before the distance has ever been seen inside slowCm; once it has, a
+// dropped reading means "close and unsure", so this holds at
+// SONAR_FRONT_MIN_SPEED (in cruiseSpeed's direction) instead of assuming the
+// way is clear (and cancels any in-progress deadband hold).
 //
 // Call every loop() once sonar polling should be active. Returns true only
-// once the front distance has held within the stopCm deadband continuously
-// for SONAR_HOLD_MS -- driveControlStop() (the full decel/settle ramp) has
+// once the distance has held within the stopCm deadband continuously for
+// SONAR_HOLD_MS -- driveControlStop() (the full decel/settle ramp) has
 // already been called internally when that happens, so the caller just
 // needs to transition state.
-bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm, float slowCm);
+bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm, float slowCm, float (*sonarGetCm)());
 
 // Call once when entering a fresh straight-driving state (alongside
 // driveControlReset()). Latches the heading-hold target to the robot's
@@ -82,6 +88,16 @@ void driveControlUpdateStraight(int speed);
 // relative to the current heading -- positive turns right/clockwise,
 // negative turns left/counter-clockwise (e.g. +90 or -90 for a quarter turn).
 void turnControlStart(float relativeDeg);
+
+// Same as turnControlStart(), but targetHeadingDeg is an absolute heading in
+// the IMU's own reference frame (0-360, whatever heading imuGetHeading()
+// read as 0 at boot/last recalibration -- NOT magnetic north, see IMU.h)
+// rather than a delta from wherever the robot currently happens to be
+// facing. Use this when the caller cares about ending up pointed the same
+// direction regardless of entry heading (e.g. "face 90" from either 10 or
+// 260); use turnControlStart() when the caller already knows the delta it
+// wants (e.g. "turn around 180 from wherever we're facing now").
+void turnControlStartAbsolute(float targetHeadingDeg);
 
 // Call every loop() while turning; pwm is the max turn speed (ramped down
 // near the target). Returns true once the turn is done (within tolerance,
