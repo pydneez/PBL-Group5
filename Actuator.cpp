@@ -103,7 +103,8 @@ void gateRequestClose() {
 }
 
 void gateControlUpdate() {
-  if (millis() - gateStateEnteredAt < GATE_OPEN_HOLD_MS) return;
+  unsigned long settleMs = (gate_state == GateState::CLOSING) ? GATE_CLOSE_SETTLE_MS : GATE_OPEN_HOLD_MS;
+  if (millis() - gateStateEnteredAt < settleMs) return;
 
   if (gate_state == GateState::OPENING) {
     gate_state = GateState::OPEN;

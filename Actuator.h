@@ -47,10 +47,6 @@ void liftRequestDown();
 void gateRequestOpen();
 void gateRequestClose();
 
-// Call unconditionally every loop(), regardless of the active TaskState --
-// this is what lets the gripper keep moving toward its requested position
-// while the robot is simultaneously driving/turning, instead of blocking
-// the whole state machine like the old delay()-based version did.
 void gripperControlUpdate();
 void liftControlUpdate();
 void gateControlUpdate();
@@ -59,11 +55,6 @@ GripperState gripperGetState();
 LiftState lifterGetState();
 GateState gateGetState();
 
-// True once the servo has held its commanded position for GRIPPER_MS --
-// i.e not still transitioning.
 bool gripperIsSettled();
 bool lifterIsSettled();
-
-// Always true (no-op settled) while GATE_SERVO_PIN is PIN_NOT_WIRED -- see
-// gateInit() above.
 bool gateIsSettled();
