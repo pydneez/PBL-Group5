@@ -22,35 +22,29 @@ void driveControlReset();
 // every other call just re-applies the last corrected PWM so the motors keep driving continuously.
 void driveControlUpdate(int leftSpeed, int rightSpeed);
 
-// Ramps all four wheels down to 0 from whatever they were last commanded to,
-// over DRIVE_DECEL_MS, instead of cutting power in one step like stopAll()
-// does -- an instant full-speed-to-zero stop jolts the chassis. Then holds
-// at 0 for DRIVE_SETTLE_MS so residual momentum/coasting actually dies out
-// before returning, so the caller's next move (e.g. reversing direction)
-// starts from a genuinely stationary robot. Call this instead of stopAll()
-// when ending a DRIVE_FORWARD_TO_CENTER/DRIVE_BACKWARD_TO_CENTER run. Blocking, but short
-// (DRIVE_DECEL_MS + DRIVE_SETTLE_MS at most) -- not for the emergency stop
-// path, which needs to stay instant.
+// Ramps all four wheels down to 0 from whatever 
+// they were last commanded to, over DRIVE_DECEL_MS
 void driveControlStop();
 
 // Drives straight (via driveControlUpdateStraight) while polling
-// sonarGetCm() every call -- pass sonarGetFrontCm for a forward approach
-// (cruiseSpeed >= 0) or sonarGetBackCm for a reverse approach (cruiseSpeed <
-// 0). Every internal speed is derived from cruiseSpeed's own sign/magnitude,
-// not hardcoded to forward, so the same deadband/hold state machine works
-// for both. Four zones, keyed off stopCm/slowCm and SONAR_BELT_DEADBAND
+// sonarGetCm() every call. Every internal speed is derived from cruiseSpeed's
+// own sign/magnitude, not hardcoded to forward, so this works for either
+// approach direction -- but the only remaining caller is APPROACH_DROPZONE
+// (sonarGetBackCm, cruiseSpeed < 0); APPROACH_BELT switched to a blind
+// bumper-timed drive and no longer calls this (see BELT_APPROACH_MS/SPEED in
+// Config.h). Four zones, keyed off stopCm/slowCm and SONAR_DROPZONE_DEADBAND
 // (Config.h):
-//   - closer than stopCm - SONAR_BELT_DEADBAND: overshot (too close) --
+//   - closer than stopCm - SONAR_DROPZONE_DEADBAND: overshot (too close) --
 //     gentle backup at SONAR_FRONT_MIN_SPEED in the opposite direction from
 //     cruiseSpeed, instead of grinding into the wall.
-//   - within +/- SONAR_BELT_DEADBAND of stopCm: holds at zero PWM and starts a
-//     SONAR_HOLD_MS timer; any reading that drifts back outside the
+//   - within +/- SONAR_DROPZONE_DEADBAND of stopCm: holds at zero PWM and starts
+//     a SONAR_HOLD_MS timer; any reading that drifts back outside the
 //     deadband before the timer elapses cancels the hold and falls back to
 //     the backup/approach zones above -- only a reading that stays inside
 //     the deadband continuously for SONAR_HOLD_MS commits to "reached".
-//   - between stopCm+SONAR_BELT_DEADBAND and slowCm: still approaching -- speed
-//     eases linearly from cruiseSpeed down to SONAR_FRONT_MIN_SPEED (same
-//     direction as cruiseSpeed).
+//   - between stopCm+SONAR_DROPZONE_DEADBAND and slowCm: still approaching --
+//     speed eases linearly from cruiseSpeed down to SONAR_FRONT_MIN_SPEED
+//     (same direction as cruiseSpeed).
 //   - beyond slowCm: full cruiseSpeed.
 // A -1 reading (no echo -- see Sonar.h) is treated as "keep cruising" only
 // before the distance has ever been seen inside slowCm; once it has, a
