@@ -13,12 +13,12 @@
 // infrequent. Behavior confirmed against a standalone bench test
 // (test_sonar_wall.ino) before porting in here.
 static unsigned long lastFrontPingAt = 0;
-static const long FRONT_PING_INTERVAL_MS = 60;
+static const long FRONT_PING_INTERVAL_MS = 45;
 static const unsigned long FRONT_ECHO_TIMEOUT_US = 15000; // ~257cm max range
 static float cachedDistFront = -1;
 
 static unsigned long lastBackPingAt = 0;
-static const long BACK_PING_INTERVAL_MS = 60;
+static const long BACK_PING_INTERVAL_MS = 30;
 static const unsigned long BACK_ECHO_TIMEOUT_US = 15000; // ~257cm max range
 static float cachedDistBack = -1;
 
