@@ -96,11 +96,3 @@ bool imuRestartCalibration() {
   return imuInit();
 }
 
-void imuPrintDiagnostics() {
-  uint8_t systemStatus, selfTestResult, systemError;
-  bno.getSystemStatus(&systemStatus, &selfTestResult, &systemError);
-  Serial.print("  IMU diag: mode="); Serial.print(bno.getMode());
-  Serial.print(" sysStatus="); Serial.print(systemStatus);
-  Serial.print(" selfTest="); Serial.print(selfTestResult, HEX);
-  Serial.print(" sysError="); Serial.println(systemError);
-}

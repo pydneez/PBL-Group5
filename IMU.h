@@ -37,7 +37,3 @@ ImuVector3 imuGetRawMagnetometer();
 void imuSaveCalibration();
 
 bool imuRestartCalibration();
-
-// Debug-only: prints the chip's actual operating mode register and system
-// status/error registers to Serial.
-void imuPrintDiagnostics();

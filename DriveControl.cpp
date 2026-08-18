@@ -288,7 +288,6 @@ static void logImuHealth(const char* when) {
   if (cal.system == 0) {
     Serial.println("  !! IMU system calibration is 0 -- heading is not trustworthy right now (see IMU.h). Recalibrate ('c' at IDLE).");
   }
-  imuPrintDiagnostics();
 }
 
 void turnControlStart(float relativeDeg) {
