@@ -14,13 +14,8 @@ static bool needsSeed = true;
 // motors keep driving continuously instead of only moving on update ticks.
 static int outLF = 0, outLR = 0, outRF = 0, outRR = 0;
 
-// Last valid (non -1) reading from whichever sonar the current
-// driveControlCruiseToSonarStop() call is using (front or back)
 static float lastValidDistCm = -1;
 
-// millis() timestamp the distance most recently entered the
-// +/-SONAR_BELT_DEADBAND window, or 0 if it isn't currently inside it -- see the
-// hold-and-recheck logic in driveControlCruiseToSonarStop().
 static unsigned long deadbandEnteredAt = 0;
 
 void driveControlInit() {
@@ -97,8 +92,6 @@ void driveControlUpdate(int leftSpeed, int rightSpeed) {
     outRF = correctWheel(pidRF, ticksRF, rightSpeed, dtSeconds);
     outRR = correctWheel(pidRR, ticksRR, rightSpeed, dtSeconds);
 
-    // Logged unconditionally for now -- gains are still placeholders and 
-    // this is the data needed to tune them. Remove/gate behind a flag once tuned.
     Serial.print("DriveControl  LF t:"); Serial.print(ticksLF); Serial.print(" o:"); Serial.print(outLF);
     Serial.print("  LR t:"); Serial.print(ticksLR); Serial.print(" o:"); Serial.print(outLR);
     Serial.print("  RF t:"); Serial.print(ticksRF); Serial.print(" o:"); Serial.print(outRF);
@@ -138,26 +131,25 @@ bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm, float slowCm, 
   int dir = (cruiseSpeed >= 0) ? 1 : -1;
   int cruiseMag = abs(cruiseSpeed);
 
-  int distCm = sonarGetCm();
+  float distCm = sonarGetCm();
 
   if (distCm > 0) {
     lastValidDistCm = distCm;
   } else {
     bool wasClose = (lastValidDistCm > 0 && lastValidDistCm < slowCm);
-    driveControlUpdateStraight(wasClose ? dir * SONAR_FRONT_MIN_SPEED : cruiseSpeed);
+    driveControlUpdateStraight(wasClose ? dir * SONAR_MIN_SPEED : cruiseSpeed);
     deadbandEnteredAt = 0; // lost the reading -- no longer a confirmed hold
     return false;
   }
 
-  bool inDeadband = (distCm >= stopCm - SONAR_BELT_DEADBAND) && (distCm <= stopCm + SONAR_BELT_DEADBAND);
+  bool inDeadband = (distCm >= stopCm - SONAR_DROPZONE_DEADBAND) && (distCm <= stopCm + SONAR_DROPZONE_DEADBAND);
 
   if (!inDeadband) {
     deadbandEnteredAt = 0; // any excursion outside the deadband resets the hold timer
 
-    if (distCm < stopCm - SONAR_BELT_DEADBAND) {
+    if (distCm < stopCm - SONAR_DROPZONE_DEADBAND) {
       // Overshot the stop distance (too close) -- back off gently the
-      // opposite way from the approach direction.
-      driveControlUpdateStraight(-dir * SONAR_FRONT_MIN_SPEED);
+      driveControlUpdateStraight(-dir * SONAR_MIN_SPEED);
       return false;
     }
 
@@ -165,15 +157,13 @@ bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm, float slowCm, 
     if (distCm < slowCm) {
       float frac = (distCm - stopCm) / (slowCm - stopCm);
       frac = constrain(frac, 0.0f, 1.0f);
-      speedMag = SONAR_FRONT_MIN_SPEED + (int)((cruiseMag - SONAR_FRONT_MIN_SPEED) * frac);
+      speedMag = SONAR_MIN_SPEED + (int)((cruiseMag - SONAR_MIN_SPEED) * frac);
     }
     driveControlUpdateStraight(dir * speedMag);
     return false;
   }
 
-  // Inside the deadband -- hold at zero PWM (not the full decel/settle ramp yet)
-  //  Only commit to "reached" once it's held
-  // steady for SONAR_HOLD_MS straight.
+  // Inside the deadband -- hold at zero PWM
   if (deadbandEnteredAt == 0) {
     deadbandEnteredAt = millis();
   }
