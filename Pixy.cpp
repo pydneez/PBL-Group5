@@ -6,6 +6,7 @@
 static Pixy2 pixy;
 
 void pixyInit() {
+  delay(1000);
   pixy.init();
   Serial.println("Pixy Setup Complete");
 }
