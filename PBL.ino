@@ -15,7 +15,7 @@ enum class TaskState {
   DRIVE_FORWARD_TO_CENTER,     // driving straight
   TURN_RIGHT_TO_BELT, // closed-loop 90 deg turn to face the belt
   TURN_LEFT_TO_BELT,         // closed-loop 90 deg turn against IMU heading
-  APPROACH_BELT,     // driving straight at BELT_APPROACH_SPEED; stops within SONAR_BELT_STOP_CM
+  APPROACH_BELT,     // blind drive at BELT_APPROACH_SPEED for BELT_APPROACH_MS; physical bumper (not sonar) sets the final stop distance
   DETECT_CUBE,       // waiting for Pixy to identify
   GRIPPER_OPEN,
   GRIPPER_CLOSE,
@@ -28,14 +28,8 @@ enum class TaskState {
   APPROACH_DROPZONE,
   DROPPING_CUBE,     // stopped within SONAR_DROPZONE_STOP_CM; grabber not implemented yet
   DRIVE_BACKWARD_TO_CENTER,   // driving away from drop-off wall
-
-  TURN_180,
   GATE_OPEN,        // releases carried cube(s) at the drop zone -- gate servo not wired yet, see Actuator.cpp
   GATE_CLOSE,
-  ENCODER_TEST,
-  TURN_TEST,
-  DRIVE_PID_TEST,    // forward 2000ms, backward 2000ms, once -- re-baseline DRIVE_PID_TARGET_TICKS_PER_INTERVAL after a weight change
-  DRIVE_STRAIGHT_TEST, // forward 2000ms, backward 2000ms, once -- heading-hold active, for tuning DRIVE_HEADING_KP
   DONE
 };
 
@@ -75,7 +69,6 @@ const char* stateName(TaskState s) {
     case TaskState::DRIVE_BACKWARD_TO_CENTER:   return "DRIVE_BACKWARD_TO_CENTER";
     case TaskState::TURN_RIGHT_TO_BELT: return "TURN_RIGHT_TO_BELT";
     case TaskState::TURN_LEFT_TO_BELT: return "TURN_LEFT_TO_BELT";
-    case TaskState::TURN_180: return "TURN_180";
     
     case TaskState::APPROACH_BELT: return "APPROACH_BELT";
     case TaskState::BACKWARD_FROM_BELT: return "BACKWARD_FROM_BELT";
@@ -93,10 +86,6 @@ const char* stateName(TaskState s) {
     case TaskState::LIFT_DOWN: return "LIFT_DOWN";
     case TaskState::GATE_OPEN: return "GATE_OPEN";
     case TaskState::GATE_CLOSE: return "GATE_CLOSE";
-
-    case TaskState::TURN_TEST: return "TURN_TEST";
-    case TaskState::DRIVE_PID_TEST: return "DRIVE_PID_TEST";
-    case TaskState::DRIVE_STRAIGHT_TEST: return "DRIVE_STRAIGHT_TEST";
     case TaskState::DONE:   return "DONE";
   }
   return "?";
@@ -122,12 +111,7 @@ unsigned long timeInState() {
   return millis() - stateEnteredAt;
 }
 
-// Runs a single closed-loop turn: starts it once when the state is freshly
-// entered, then just polls turnControlUpdate() on every later call. Returns
-// true once the turn has completed AND the robot has actually stopped at
-// the target heading -- finishTurn() (DriveControl.cpp) cuts power
-// immediately and settles before reporting done, so a true return here
-// means it's safe to move on to the next TaskState.
+
 bool runSingleTurn(float relativeDeg, unsigned long& lastEnteredAt) {
   if (stateEnteredAt != lastEnteredAt) {
     lastEnteredAt = stateEnteredAt;
@@ -159,8 +143,8 @@ void setup() {
       if (imuHasValidCalibration()) {
         Serial.println("IMU: valid calibration restored from EEPROM -- skipping calibration wait.");
         // When powered
-        setState(TaskState::DRIVE_FORWARD_TO_CENTER);
-        //setState(TaskState::IDLE);
+        //setState(TaskState::DRIVE_FORWARD_TO_CENTER);
+        setState(TaskState::IDLE);
       } else {
         setState(TaskState::IMU_CALIBRATE);
       }
@@ -188,11 +172,6 @@ void loop() {
       if (millis() - lastPrintAt >= 200) {
         lastPrintAt = millis();
         ImuCalibration cal = imuGetCalibration();
-        //Serial.print("IMU calibrating -- move it gently through different orientations. Sys:");
-        //Serial.print(cal.system);
-        //Serial.print(" Gyro:"); Serial.print(cal.gyro);
-        //Serial.print(" Accel:"); Serial.print(cal.accel);
-        //Serial.print(" Mag:"); Serial.println(cal.mag);
       }
 
       if (imuIsFullyCalibrated()) {
@@ -215,22 +194,18 @@ void loop() {
         while (Serial.available() > 0) Serial.read(); 
         if (c == 'c' || c == 'C') {
           setState(TaskState::DETECT_CUBE);
-        } else if (c == 'l' || c == 'L') {
-          setState(TaskState::TURN_LEFT_TO_BELT);
         } else if (c == 'r' || c == 'R') {
           setState(TaskState::TURN_RIGHT_TO_BELT);
         } else if (c == 'f' || c == 'F') {
           setState(TaskState::DRIVE_FORWARD_TO_CENTER);
         } else if (c == 'b' || c == 'B') {
           setState(TaskState::DRIVE_BACKWARD_TO_CENTER);
-        } else if (c == 'p' || c == 'P') {
-          setState(TaskState::DRIVE_PID_TEST);
-        } else if (c == 's' || c == 'S') {
-          setState(TaskState::DRIVE_STRAIGHT_TEST);
         } else if (c == 'a' || c == 'A') {
           setState(TaskState::APPROACH_BELT);
         } else if (c == 'w' || c == 'W') {
           setState(TaskState::APPROACH_DROPZONE);
+        } else if (c == 'l' || c == 'L') {
+          setState(TaskState::LIFT_DOWN);
         }
       }
       break;
@@ -284,31 +259,22 @@ void loop() {
 
     case TaskState::APPROACH_BELT: {
       static unsigned long lastEnteredAt = 0;
-      static unsigned long lastPrintAt = 0;
       if (stateEnteredAt != lastEnteredAt) {
         lastEnteredAt = stateEnteredAt;
         driveControlReset();
         driveControlStraightStart();
       }
 
-      if (millis() - lastPrintAt >= 200) {
-        lastPrintAt = millis();
-        Serial.print("APPROACH_BELT front sonar: ");
-        Serial.print(sonarGetFrontCm());
-        Serial.println(" cm");
-      }
+      driveControlUpdateStraight(BELT_APPROACH_SPEED);
 
-      // Cruises at BELT_APPROACH_SPEED, easing down as the front sonar closes in
-      bool reachedBelt = driveControlCruiseToSonarStop(BELT_APPROACH_SPEED, SONAR_BELT_STOP_CM, SONAR_BELT_SLOW_CM, sonarGetFrontCm);
-
-      if (reachedBelt) {
+      if (timeInState() >= BELT_APPROACH_MS) {
+        stopAll();
         setState(TaskState::DETECT_CUBE);
       }
       break;
     }
 
     case TaskState::BACKWARD_FROM_BELT: {
-
       static unsigned long lastEnteredAt = 0;
       if (stateEnteredAt != lastEnteredAt) {
         lastEnteredAt = stateEnteredAt;
@@ -530,118 +496,12 @@ void loop() {
       if (runSingleTurn(180, lastEnteredAt)) {
         // this assume we will never miss twice !!!!!
 
-        // Second use (returning from the recheck flip) heads straight to
-        // APPROACH_DROPZONE; first use (flipping out to recheck) goes back
-        // to LOCATE_DROPZONE for a second scan.
         setState(dropzoneReturningFromRecheck ? TaskState::APPROACH_DROPZONE : TaskState::LOCATE_DROPZONE);
       }
       break;
     }
-
-    case TaskState::TURN_TEST: {
-      static unsigned long lastEnteredAt = 0;
-      static int turnIndex = 0;
-      if (stateEnteredAt != lastEnteredAt) {
-        lastEnteredAt = stateEnteredAt;
-        turnIndex = 0;
-        turnControlStart((turnIndex % 2 == 0) ? 90 : -90);
-      }
-
-      if (turnControlUpdate(TURN_SPEED)) {
-        turnIndex++;
-        if (turnIndex < TURN_TEST_REPEATS) {
-          turnControlStart((turnIndex % 2 == 0) ? 90 : -90);
-        } else {
-          setState(TaskState::IDLE);
-        }
-      }
-      break;
-    }
-    case TaskState::DRIVE_PID_TEST: {
-      // Plain driveControlUpdate() on purpose, not driveControlUpdateStraight()
-      // -- this is re-baselining DRIVE_PID_TARGET_TICKS_PER_INTERVAL itself
-      // (Config.h) after the weight/CG shifted, so it should measure raw
-      // ticks-per-interval at a fixed commanded PWM, not muddy that with the
-      // heading-hold layer biasing left/right unevenly.
-      static unsigned long lastEnteredAt = 0;
-      static unsigned long phaseStartAt = 0;
-      static int phase = 0; // 0 = forward, 1 = backward, 2 = done
-
-      if (stateEnteredAt != lastEnteredAt) {
-        lastEnteredAt = stateEnteredAt;
-        phase = 0;
-        phaseStartAt = millis();
-        driveControlReset();
-        Serial.println("=== DRIVE_PID_TEST: forward phase (2000ms) ===");
-      }
-
-      if (phase == 0) {
-        driveControlUpdate(CRUISE_SPEED, CRUISE_SPEED);
-        if (millis() - phaseStartAt >= 2000) {
-          driveControlStop();
-          driveControlReset();
-          phase = 1;
-          phaseStartAt = millis();
-          Serial.println("=== DRIVE_PID_TEST: backward phase (2000ms) ===");
-        }
-      } else if (phase == 1) {
-        driveControlUpdate(-CRUISE_SPEED, -CRUISE_SPEED);
-        if (millis() - phaseStartAt >= 2000) {
-          driveControlStop();
-          Serial.println("=== DRIVE_PID_TEST: done -- paste the 'DriveControl ... t: o:' lines above back to Claude ===");
-          setState(TaskState::IDLE);
-        }
-      }
-      break;
-    }
-
-    case TaskState::DRIVE_STRAIGHT_TEST: {
-      // Same forward/backward shuttle as DRIVE_PID_TEST, but through
-      // driveControlUpdateStraight() with heading-hold active, so it prints
-      // the "Straight heading:.. err:.. corr:.." log (DriveControl.cpp) for
-      // tuning DRIVE_HEADING_KP -- the encoder-only DRIVE_PID_TEST
-      // deliberately skips this layer, see its own comment above.
-      static unsigned long lastEnteredAt = 0;
-      static unsigned long phaseStartAt = 0;
-      static int phase = 0; // 0 = forward, 1 = backward, 2 = done
-
-      if (stateEnteredAt != lastEnteredAt) {
-        lastEnteredAt = stateEnteredAt;
-        phase = 0;
-        phaseStartAt = millis();
-        driveControlReset();
-        // Latched once for both phases -- reversing direction doesn't change
-        // which cardinal heading we're holding against (see
-        // driveControlUpdateStraight()'s reverse-direction comment).
-        driveControlStraightStart();
-        Serial.println("=== DRIVE_STRAIGHT_TEST: forward phase (2000ms) ===");
-      }
-
-      if (phase == 0) {
-        driveControlUpdateStraight(CRUISE_SPEED);
-        if (millis() - phaseStartAt >= 1800) {
-          driveControlStop();
-          driveControlReset();
-          phase = 1;
-          phaseStartAt = millis();
-          Serial.println("=== DRIVE_STRAIGHT_TEST: backward phase (2000ms) ===");
-        }
-      } else if (phase == 1) {
-        driveControlUpdateStraight(-CRUISE_SPEED);
-        if (millis() - phaseStartAt >= 1800) {
-          driveControlStop();
-          Serial.println("=== DRIVE_STRAIGHT_TEST: done -- paste the 'Straight heading:.. err:.. corr:..' lines above back to Claude ===");
-          setState(TaskState::IDLE);
-        }
-      }
-      break;
-    }
-
   }
 
-  // Runs every tick regardless of which TaskState is active, so a gripper
-  // open/close started in one state (e.g. DROPPING_CUBE) keeps progressing
-  // even after the robot has moved on to driving/turning.
   gripperControlUpdate();
   liftControlUpdate();
   gateControlUpdate();
