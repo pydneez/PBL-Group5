@@ -5,5 +5,4 @@
 float sonarGetDistanceCm(int trigPin, int echoPin);
 
 void sonarInit();
-float sonarGetFrontCm();
 float sonarGetBackCm();
