@@ -139,16 +139,20 @@ bool runSingleTurn(float relativeDeg, unsigned long& lastEnteredAt) {
 // ---------------- SETUP ----------------
 void setup() {
     Serial.begin(115200);
-    motorsInit();
-    sonarInit();
-    pixyInit();
+    
+    delay(500); 
 
-    gripperInit();
-    liftInit();
-    gateInit();
+    pixyInit();        
+    sonarInit();         
+    encoderInit();      
 
-    encoderInit();
-    driveControlInit();
+    driveControlInit(); 
+
+    motorsInit();      
+    gripperInit();      
+    liftInit();          
+    gateInit();    
+
     stopAll();
 
     if (imuInit()) {
@@ -356,14 +360,6 @@ void loop() {
       break;
     }
 
-    case TaskState::TURN_180: {
-      static unsigned long lastEnteredAt = 0;
-      if (runSingleTurn(-180, lastEnteredAt)) {
-        setState(TaskState::GATE_OPEN);
-      }
-      break;
-    }
-
     case TaskState::GRIPPER_OPEN: {
       static unsigned long lastEnteredAt = 0;
       if (stateEnteredAt != lastEnteredAt) {
@@ -371,10 +367,6 @@ void loop() {
         gripperRequestOpen();
       }
       if (gripperIsSettled()) {
-        if (autoPickup) {
-          // Cube just released into the carrier -- bank it, then either go
-          // back for another (same color, see DETECT_CUBE's lock) or head
-          // to the drop zone if the carrier's full.
           carriedCubeCount++;
           carriedColor = detectedCubeColor;
           Serial.print("GRIPPER_OPEN: carrier now holds ");
@@ -387,10 +379,7 @@ void loop() {
           } else {
             setState(TaskState::BACKWARD_FROM_BELT);
           }
-        } else {
-          // Manual 'g' actuator test -- no belt loop to return to.
-          setState(TaskState::IDLE);
-        }
+       
       }
       break;
     }
@@ -437,6 +426,9 @@ void loop() {
       if (stateEnteredAt != lastEnteredAt) {
         lastEnteredAt = stateEnteredAt;
         gateRequestOpen();
+        detectedCubeColor = CubeColor::NONE;
+        carriedCubeCount = 0;
+        carriedColor = CubeColor::NONE;
       }
       if (timeInState() >= GATE_OPEN_HOLD_MS) {
         setState(TaskState::GATE_CLOSE);
@@ -451,12 +443,6 @@ void loop() {
         gateRequestClose();
       }
       if (gateIsSettled()) {
-        // Cubes are out of the carrier -- clear the carried/detected state
-        // before heading back for the next batch, so DETECT_CUBE's color
-        // lock and GRIPPER_OPEN's carriedCubeCount check start fresh.
-        detectedCubeColor = CubeColor::NONE;
-        carriedCubeCount = 0;
-        carriedColor = CubeColor::NONE;
         setState(TaskState::DRIVE_FORWARD_TO_CENTER);
       }
       break;
@@ -534,55 +520,7 @@ void loop() {
       if (runSingleTurn(carriedColor == CubeColor::RED ? 90 : -90, lastEnteredAt)) {
         approachedFromYellow = (carriedColor != CubeColor::RED);
         setState(TaskState::APPROACH_DROPZONE);
-        //setState(TaskState::LOCATE_DROPZONE);
-      }
-      break;
-    }
 
-    case TaskState::LOCATE_DROPZONE: {
-      // Stay put while scanning, same reasoning as DETECT_CUBE -- this is a
-      // confirmation step, not a search, so there's nothing to steer toward.
-      stopAll();
-
-      static unsigned long lastEnteredAt = 0;
-      static int consecutiveMatches = 0;
-      if (stateEnteredAt != lastEnteredAt) {
-        lastEnteredAt = stateEnteredAt;
-        consecutiveMatches = 0;
-        Serial.print("LOCATE_DROPZONE: scanning for ");
-        Serial.print(carriedColor == CubeColor::RED ? "GREEN (opposite side of Target)" : "RED (opposite side of Target)");
-        Serial.println(" marker...");
-      }
-
-      // since we're backing into the drop zone -> we will detect the opposite colour
-      PixyDetectMode mode = (carriedColor == CubeColor::RED) ? PixyDetectMode::SEEK_GREEN_DROP : PixyDetectMode::SEEK_RED_DROP;
-      PixyDetection d = pixyDetect(mode);
-      if (d.found) {
-        consecutiveMatches++;
-      } else {
-        consecutiveMatches = 0;
-      }
-
-      if (consecutiveMatches >= LOCATE_DROPZONE_CONFIRM_FRAMES) {
-        Serial.println("LOCATE_DROPZONE: marker confirmed -- approaching.");
-        setState(TaskState::APPROACH_DROPZONE);
-      } else if (timeInState() >= LOCATE_DROPZONE_TIMEOUT_MS) {
-        if (!dropzoneRecoveryUsed) {
-          // First miss -- could just be a wrong turn (drift, slip). 
-          // Flip aound
-          Serial.println("LOCATE_DROPZONE: marker not found -- turning 180 to recheck.");
-          dropzoneRecoveryUsed = true;
-          setState(TaskState::TURN_180_RECHECK_DROPZONE);
-        } else {
-          // Second miss, at the flipped (recheck) heading -- neither side
-          // confirmed. Turn back to the original fixed-turn heading (the
-          // intended/designed direction) before proceeding blind, rather
-          // than approach from the unconfirmed flipped heading we happen
-          // to be sitting at.
-          Serial.println("LOCATE_DROPZONE: marker still not found after recheck -- turning back to proceed blind.");
-          dropzoneReturningFromRecheck = true;
-          setState(TaskState::TURN_180_RECHECK_DROPZONE);
-        }
       }
       break;
     }
