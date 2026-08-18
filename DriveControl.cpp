@@ -134,8 +134,6 @@ void driveControlStop() {
 }
 
 bool driveControlCruiseToSonarStop(int cruiseSpeed, float stopCm, float slowCm, float (*sonarGetCm)()) {
-  // Direction/magnitude split so every speed below 
-  // is derived from cruiseSpeed's own sign
   // + forward / - backward
   int dir = (cruiseSpeed >= 0) ? 1 : -1;
   int cruiseMag = abs(cruiseSpeed);

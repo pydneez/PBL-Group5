@@ -51,22 +51,14 @@ bool approachedFromYellow = true;
 
 // True while the current LIFT_DOWN..GRIPPER_OPEN chain was kicked off by
 // DETECT_CUBE (the real belt pickup loop), false when it was kicked off
-// manually from IDLE's 'g' test key -- lets GRIPPER_OPEN tell the two
-// callers apart and only run the carry-count/loop-back logic for the real
-// pickup path.
+// manually from IDLE's 'g' test key 
 bool autoPickup = true;
 
-// True once TURN_180_RECHECK_DROPZONE has already been used for the current
-// drop-off leg -- LOCATE_DROPZONE only gets one recheck turn per leg before
-// it gives up and proceeds blind. Reset when TURN_TO_DROPZONE is (re)entered
-// and each time IDLE is (re)entered.
+// True once TURN_180_RECHECK_DROPZONE has already been used for the current drop-off leg
 bool dropzoneRecoveryUsed = false;
 
 // True only while TURN_180_RECHECK_DROPZONE is being used to turn back to
-// the original heading after a second miss, as opposed to its first use
-// (turning out to recheck the opposite side). Distinguishes the two so the
-// turn knows whether to send LOCATE_DROPZONE another look or go straight to
-// APPROACH_DROPZONE. Reset alongside dropzoneRecoveryUsed.
+// the original heading after a second miss
 bool dropzoneReturningFromRecheck = false;
 
 TaskState state = TaskState::IDLE;
