@@ -143,8 +143,8 @@ void setup() {
       if (imuHasValidCalibration()) {
         Serial.println("IMU: valid calibration restored from EEPROM -- skipping calibration wait.");
         // When powered
-        //setState(TaskState::DRIVE_FORWARD_TO_CENTER);
-        setState(TaskState::IDLE);
+        setState(TaskState::DRIVE_FORWARD_TO_CENTER);
+        //setState(TaskState::IDLE);
       } else {
         setState(TaskState::IMU_CALIBRATE);
       }
