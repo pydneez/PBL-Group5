@@ -21,8 +21,8 @@
 #define BACK_MS    70   
 #define CRUISE_SPEED 220
 
-#define BELT_APPROACH_MS 260
-#define BELT_APPROACH_SPEED 255
+#define BELT_APPROACH_MS 330
+#define BELT_APPROACH_SPEED 220
 
 // Ceiling speed for APPROACH_DROPZONE --
 #define DROPZONE_APPROACH_SPEED -130 // backward
@@ -38,7 +38,7 @@
 #define SONAR_DROPZONE_DEADBAND 10
 
 // How long the distance must stay continuously inside the +/-
-#define SONAR_HOLD_MS 100
+#define SONAR_HOLD_MS 300
 
 // Floor PWM for the wall/belt approach 
 #define SONAR_MIN_SPEED    60
@@ -221,7 +221,7 @@
 #define TURN_SCALE_LF 1.0f
 #define TURN_SCALE_LR 1.0f
 #define TURN_SCALE_RF 1.0f
-#define TURN_SCALE_RR 1.0f
+#define TURN_SCALE_RR 1.1f
 
 
 // Must stay above TURN_SPEED/TURN_PWM_FLOOR or it isn't a "burst" at all --
@@ -285,4 +285,4 @@
 #define LIFT_DOWN_NUM 0
 
 
-#define LIFTER_MS 1200
+#define LIFTER_MS 970
