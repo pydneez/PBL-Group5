@@ -163,8 +163,8 @@ void setup() {
       if (imuHasValidCalibration()) {
         Serial.println("IMU: valid calibration restored from EEPROM -- skipping calibration wait.");
         // When powered
-        //setState(TaskState::DRIVE_FORWARD_TO_CENTER);
-        setState(TaskState::IDLE);
+        setState(TaskState::DRIVE_FORWARD_TO_CENTER);
+        //setState(TaskState::IDLE);
       } else {
         setState(TaskState::IMU_CALIBRATE);
       }
@@ -216,39 +216,23 @@ void loop() {
 
       if (Serial.available() > 0) {
         char c = Serial.read();
-        while (Serial.available() > 0) Serial.read(); // drain the buffer
+        while (Serial.available() > 0) Serial.read(); 
         if (c == 'c' || c == 'C') {
-          //imuRestartCalibration();
           setState(TaskState::DETECT_CUBE);
-        } else if (c == 't' || c == 'T') {
-          setState(TaskState::TURN_TEST);
         } else if (c == 'l' || c == 'L') {
           setState(TaskState::TURN_LEFT_TO_BELT);
         } else if (c == 'r' || c == 'R') {
           setState(TaskState::TURN_RIGHT_TO_BELT);
-        } else if (c == 'u' || c == 'U') {
-          setState(TaskState::TURN_180);
         } else if (c == 'f' || c == 'F') {
           setState(TaskState::DRIVE_FORWARD_TO_CENTER);
         } else if (c == 'b' || c == 'B') {
           setState(TaskState::DRIVE_BACKWARD_TO_CENTER);
-        } else if (c == 'd' || c == 'D') {
-          // Runs the full pickup cycle: lift down -> grab -> lift up -> release.
-          // Manual actuator test, not a real belt pickup -- autoPickup=false
-          // tells GRIPPER_OPEN to just return to IDLE instead of looping
-          // back for another cube.
-          autoPickup = false;
-          setState(TaskState::LIFT_DOWN);
-        } else if (c == 'i' || c == 'I') {
-          setState(TaskState::IDLE);
         } else if (c == 'p' || c == 'P') {
           setState(TaskState::DRIVE_PID_TEST);
         } else if (c == 's' || c == 'S') {
           setState(TaskState::DRIVE_STRAIGHT_TEST);
         } else if (c == 'a' || c == 'A') {
           setState(TaskState::APPROACH_BELT);
-        } else if (c == 'g' || c == 'G') {
-          setState(TaskState::GATE_OPEN);
         } else if (c == 'w' || c == 'W') {
           setState(TaskState::APPROACH_DROPZONE);
         }
