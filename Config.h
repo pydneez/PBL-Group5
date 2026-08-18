@@ -16,52 +16,34 @@
 #define PIN_R_REAR  9    // right rear speed (PWM)
 
 // ---------------- TIMING / SPEED ----------------
-// Safety-net max drive time for DRIVE_FORWARD_TO_CENTER -- the sonar (see
-// SONAR_DROPZONE_STOP_CM / DRIVE_BEFORE_SONAR_MS below) is what actually
-// stops the robot; this just keeps a stuck/failed sonar reading from driving
-// forever. Must stay well above DRIVE_BEFORE_SONAR_MS or the timeout fires
-// before sonar polling even starts. Was 900ms when this was purely a
-// fixed-time drive -- retune down once the real distance-to-wall is known.
 #define DRIVE_MS    1000
 #define TURN_MS     800   
 #define BACK_MS    70   
 #define CRUISE_SPEED 220
 
-// Ceiling speed for the belt approach (APPROACH_BELT) 
-#define BELT_APPROACH_SPEED 65
+#define BELT_APPROACH_MS 260
+#define BELT_APPROACH_SPEED 255
 
-// Ceiling speed for the wall/dropzone approach (APPROACH_DROPZONE) --
-#define DROPZONE_APPROACH_SPEED -200 // backward
+// Ceiling speed for APPROACH_DROPZONE --
+#define DROPZONE_APPROACH_SPEED -130 // backward
 
 #define TURN_SPEED   150
 
 // ---------------- SONAR / ULTRASONIC ----------------
-#define TRIG_FRONT 38
-#define ECHO_FRONT 39
 #define TRIG_BACK 30
 #define ECHO_BACK 31
 
 #define SONAR_DROPZONE_STOP_CM  15
 #define SONAR_DROPZONE_SLOW_CM 50
-#define SONAR_DROPZONE_DEADBAND 5
-
-#define SONAR_BELT_STOP_CM  4
-#define SONAR_BELT_SLOW_CM 15
-#define SONAR_BELT_DEADBAND 1
-
+#define SONAR_DROPZONE_DEADBAND 10
 
 // How long the distance must stay continuously inside the +/-
-// SONAR_BELT_DEADBAND window before commits to "reached". 
-#define SONAR_HOLD_MS 200
+#define SONAR_HOLD_MS 100
 
 // Floor PWM for the wall/belt approach 
-// (easing down as distance closes in, backup 
-// if it overshoots past STOP_CM - SONAR_BELT_DEADBAND).
-#define SONAR_FRONT_MIN_SPEED    60
+#define SONAR_MIN_SPEED    60
 
 // ---------------- PIXY2 CAMERA ----------------
-// Set to 1 to print per-block detection details (signature/position/size/
-// distance-to-pickup-zone) to Serial each frame; 0 for silent normal operation.
 #define PIXY_DEBUG_PRINT_BLOCKS 0
 
 // x:0-315, y:0-207 range
@@ -77,30 +59,22 @@
 #define PIXY_SIG_DROP_RED    7   // purple marker 
 #define PIXY_SIG_DROP_GREEN  2   // yellow marker 
 
-// Reject blocks smaller than this (px) on either axis: filters camera
-// noise / specular glints (e.g. off the untrained white cube)
+// Reject blocks smaller than this (px) on either axis
 #define PIXY_MIN_BLOCK_SIZE  8
 
 #define PICKUP_ZONE_TARGET_X     127
 #define PICKUP_ZONE_TARGET_Y     127
-#define PICKUP_ZONE_ALLOWANCE_X  5
-#define PICKUP_ZONE_ALLOWANCE_Y  30
+#define PICKUP_ZONE_ALLOWANCE_X  6
+#define PICKUP_ZONE_ALLOWANCE_Y  45
+#define PICKUP_ZONE_TARGET_AREA 7500
+#define PICKUP_ZONE_ALLOWANCE_AREA 7000
 
-// DETECT_CUBE (PBL.ino) requires this many consecutive frames reporting the
-// same pixyDetect(SEEK_CUBE) match before committing to LIFT_DOWN -- guards
-// against a single noisy/spurious frame (specular glint, momentary misread)
-// triggering a real mechanical grab. Not yet measured against a real false-
-// positive rate; lower if this feels sluggish to react, raise if it commits
-// on noise.
 #define DETECT_CUBE_CONFIRM_FRAMES 1
 
 #define DETECT_CUBE_TIMEOUT_MS 10000
 #define GAME_TIMEOUT_MS 160000
 
-// Carrier capacity: DETECT_CUBE loops back for another cube after each
-// successful pickup until this many are carried, then heads to the drop zone
 #define MAX_CARRIED_CUBES 3
-
 
 
 // ---------------- ENCODERS (LM393 IR slot sensor, single-channel) ----------------
@@ -173,10 +147,8 @@
 #define DRIVE_DECEL_MS 350
 #define DRIVE_DECEL_STEPS 8
 
-// After the ramp above reaches 0, driveControlStop() holds here for this
-// long before returning -- lets residual chassis momentum/coasting actually
-// die out, so the next motion (e.g. reversing direction) starts from a
-// genuinely stationary robot instead of one still drifting from the last move.
+// After the ramp above reaches 0, driveControlStop() 
+// holds here for this long before returning 
 #define DRIVE_SETTLE_MS 200
 
 
@@ -290,9 +262,9 @@
 // ---------------- GRIPPER SERVO (MG90) ----------------
 #define GRIPPER_SERVO_PIN 34
 #define GRIPPER_OPEN_ANGLE   180 // original position dont change!!!!!
-#define GRIPPER_CLOSE_ANGLE  100
+#define GRIPPER_CLOSE_ANGLE  97
 //#define GRIPPER_MS  1185
-#define GRIPPER_MS  750
+#define GRIPPER_MS  770
 
 
 #define PIN_NOT_WIRED -1
@@ -303,6 +275,7 @@
 #define GATE_CLOSE_ANGLE  0 // original position
 
 #define GATE_OPEN_HOLD_MS 1200
+#define GATE_CLOSE_SETTLE_MS 300
 
 // ---------------- TORQUE SERVO (MG996R) ----------------
 #define LIFT_SERVO_PIN 35
@@ -312,4 +285,4 @@
 #define LIFT_DOWN_NUM 0
 
 
-#define LIFTER_MS 970
+#define LIFTER_MS 1200
