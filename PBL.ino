@@ -206,6 +206,10 @@ void loop() {
           setState(TaskState::APPROACH_DROPZONE);
         } else if (c == 'l' || c == 'L') {
           setState(TaskState::LIFT_DOWN);
+        } else if (c == 'g' || c == 'G') {
+          setState(TaskState::GATE_OPEN);
+        } else if (c = 't' || c == 'T') {
+          setState(TaskState::TURN_RIGHT_TO_BELT);
         }
       }
       break;

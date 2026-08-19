@@ -21,13 +21,13 @@
 #define BACK_MS    70   
 #define CRUISE_SPEED 220
 
-#define BELT_APPROACH_MS 330
-#define BELT_APPROACH_SPEED 220
+#define BELT_APPROACH_MS 370
+#define BELT_APPROACH_SPEED 190
 
 // Ceiling speed for APPROACH_DROPZONE --
-#define DROPZONE_APPROACH_SPEED -130 // backward
+#define DROPZONE_APPROACH_SPEED -120 // backward
 
-#define TURN_SPEED   150
+#define TURN_SPEED   160
 
 // ---------------- SONAR / ULTRASONIC ----------------
 #define TRIG_BACK 30
@@ -71,10 +71,10 @@
 
 #define DETECT_CUBE_CONFIRM_FRAMES 1
 
-#define DETECT_CUBE_TIMEOUT_MS 10000
+#define DETECT_CUBE_TIMEOUT_MS 6500
 #define GAME_TIMEOUT_MS 160000
 
-#define MAX_CARRIED_CUBES 3
+#define MAX_CARRIED_CUBES 4
 
 
 // ---------------- ENCODERS (LM393 IR slot sensor, single-channel) ----------------
@@ -183,27 +183,10 @@
 // could finish converging rather than because it was actually stuck. Raised
 // to give real convergence a chance to complete before the safety net cuts
 // it off.
-#define TURN_TIMEOUT_MS 1400
+#define TURN_TIMEOUT_MS 3500
 
-#define TURN_PWM_FLOOR 90
+#define TURN_PWM_FLOOR 130
 
-// Degrees of remaining error at which PWM starts ramping down toward
-// TURN_PWM_FLOOR. Deliberately NOT derived from TURN_HEADING_TOLERANCE_DEG
-// (they used to be tied together at tolerance*4=8deg, which meant the robot
-// was still near full speed until very close to the tight tolerance window
-// -- measured as a consistent ~5.5deg coast-through-stop overshoot). Wider
-// span here means it's already slow well before the tolerance check, so
-// physical momentum has less speed left to carry it past target.
-//
-// Was widened to 45 then narrowed back to 20 -- at 20, PWM stays pinned at
-// TURN_PWM_FLOOR=70 for only the last ~14deg (100*dist/20 < 70 below that),
-// leaving the ~70+ preceding degrees at full 100 PWM cruise with no
-// deceleration at all. Not enough runway to shed that momentum, so it
-// coasted through the tolerance window and had to reverse/correct back
-// (measured: overshoot on the first swing, then a readjust pass). 30 splits
-// the difference between that and the 45 which risked stalling at the old
-// floor=90 -- watch tick counts on retest for the stall signature (any
-// wheel dropping to 0) if this still isn't enough runway.
 #define TURN_RAMP_SPAN_DEG 50
 
 // Per-wheel PWM multiplier applied ONLY during turning (driveSides()/
@@ -214,14 +197,42 @@
 // a software band-aid for a hardware traction difference, not a fix for
 // it -- if the mechanical cause (check RR's ground contact) gets fixed
 // later, these should go back to 1.0.
-//
-// Tune by watching where the pivot actually lands: raise TURN_SCALE_RR in
-// small steps (1.1, 1.2, ...) until the turn visibly centers; back off if
-// it swings past center toward the opposite corner.
 #define TURN_SCALE_LF 1.0f
 #define TURN_SCALE_LR 1.0f
-#define TURN_SCALE_RF 1.0f
+#define TURN_SCALE_RF 0.8f
 #define TURN_SCALE_RR 1.1f
+
+// RF-specific override used only when turning LEFT (RF driving forward).
+// Turn-tick logs show RF free-spinning well ahead of the other three wheels
+// when driven forward (e.g. 24 ticks vs LF15/LR11/RR13 on one logged left
+// turn), while right turns (where RF drives backward and is barely moving at
+// all) land within ~2-3deg. TURN_SCALE_RF above stays as-is for right turns.
+// Start at 0.7 and retune from the "turned=" log line -- lower if still
+// overshooting, raise if it now undershoots or stalls RF at turn start.
+//
+// NOTE: retested at 0.7 -- RF is no longer the tick-count outlier, but
+// left-turn overshoot barely moved (still ~11deg, vs ~2-3deg on right).
+// The per-wheel outlier also isn't stable run-to-run (LF was the high
+// wheel on that retest, not RF) -- so this alone isn't the fix, see
+// TURN_LEFT_SPEED_SCALE below for the actual lever that's now targeting
+// the overshoot directly.
+#define TURN_SCALE_RF_LEFT 0.7f
+
+// Left turns consistently land ~10-12deg past target regardless of which
+// wheel's tick count happens to be highest that run (see TURN_SCALE_RF_LEFT
+// note above) -- right turns consistently land within ~2-3deg at the same
+// TURN_SPEED/TURN_PWM_FLOOR/TURN_RAMP_SPAN_DEG. That points at a direction-
+// level asymmetry (e.g. uneven weight distribution giving the left-
+// backward/right-forward combination more net rotational torque than the
+// reverse combination) rather than one specific wheel's fault -- so instead
+// of continuing to chase individual per-wheel scales, this scales the
+// *overall* commanded turnPwm down for left turns only, applied AFTER the
+// TURN_PWM_FLOOR clamp in turnControlUpdate() so the effective floor (and
+// the TURN_KICK_PWM burst) both actually come down for left turns instead
+// of being re-clamped back up. Right turns (err>0 branch) are untouched.
+// Start at 0.85 and retune from "turned=" -- lower if still overshooting,
+// raise if it undershoots or the turn starts eating into TURN_TIMEOUT_MS.
+#define TURN_LEFT_SPEED_SCALE 0.85f
 
 
 // Must stay above TURN_SPEED/TURN_PWM_FLOOR or it isn't a "burst" at all --
@@ -235,28 +246,10 @@
 #define TURN_KICK_MS 150
 #define TURN_KICK_PWM 200
 
-// Once a turn reaches tolerance, motors cut immediately (unlike
-// driveControlStop()'s ramp) -- a turn's target IS the angle, so continuing
-// to actively drive during a ramp-down directly overshoots it. This is just
-// a passive wait after the instant stop, before reading the final heading
-// for the "turned=" diagnostic -- lets real physical coast-down (not an
-// active drive command) finish so the reported heading reflects a
-// genuinely stationary robot.
-#define TURN_SETTLE_MS 150
+#define TURN_SETTLE_MS 300
 
-// How often turnControlUpdate() samples per-wheel encoder ticks during a
-// turn, purely for diagnostics (which wheel is actually turning slower --
-// e.g. to find the cause of an off-center pivot point) -- NOT used for
-// closed-loop correction. Turns stay heading-only against the IMU; a
-// single-channel encoder can't tell which wheel is going forward vs.
-// backward mid-turn, so tick counts alone can't drive the turn itself, only
-// report relative wheel speed.
+// How often turnControlUpdate() samples per-wheel encoder ticks during a turn
 #define TURN_ENCODER_SAMPLE_MS 150
-
-// Number of turns TURN_TEST runs, alternating +90/-90 each time, before
-// returning to IDLE. Pure in-place pivoting -- unlike the drive shuttle,
-// needs no straight-line arena space at all.
-#define TURN_TEST_REPEATS 1
 
 
 // ---------------- GRIPPER SERVO (MG90) ----------------
@@ -285,4 +278,4 @@
 #define LIFT_DOWN_NUM 0
 
 
-#define LIFTER_MS 970
+#define LIFTER_MS 980

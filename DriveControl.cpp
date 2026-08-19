@@ -249,10 +249,16 @@ void driveControlUpdateStraight(int speed) {
 
 // setWheel() already clamps the final PWM to +/-255, so an
 // over-scaled value here is safe, just gets capped.
+//
+// rightPwm > 0 means the right side is driving forward, which per
+// turnControlUpdate()'s err<0 branch only happens on a LEFT turn -- use
+// TURN_SCALE_RF_LEFT there instead of the right-turn TURN_SCALE_RF (see
+// Config.h for why RF needs a different scale in that direction).
 static void driveTurnWheels(int leftPwm, int rightPwm) {
+  float rfScale = (rightPwm > 0) ? TURN_SCALE_RF_LEFT : TURN_SCALE_RF;
   setWheel(PIN_L_FRONT, PIN_L_IN1, PIN_L_IN2, (int)(leftPwm  * TURN_SCALE_LF));
   setWheel(PIN_L_REAR,  PIN_L_IN3, PIN_L_IN4, (int)(leftPwm  * TURN_SCALE_LR));
-  setWheel(PIN_R_FRONT, PIN_R_IN1, PIN_R_IN2, (int)(rightPwm * TURN_SCALE_RF));
+  setWheel(PIN_R_FRONT, PIN_R_IN1, PIN_R_IN2, (int)(rightPwm * rfScale));
   setWheel(PIN_R_REAR,  PIN_R_IN3, PIN_R_IN4, (int)(rightPwm * TURN_SCALE_RR));
 }
 
@@ -340,9 +346,7 @@ static bool finishTurn(const char* reason) {
 // hovering close for TURN_NEAR_MS or hitting TURN_TIMEOUT_MS also counts as
 // done, so a turn can never get stuck (e.g. on a stale/uncalibrated heading).
 bool turnControlUpdate(int pwm) {
-  // Diagnostic-only: which wheel is actually spinning slower during a real
-  // turn (as opposed to inferring it from straight-line driving, which
-  // loads each wheel very differently). Not used to correct the turn.
+  // Diagnostic-only: which wheel is actually spinning slower during a real turn 
   static unsigned long lastEncoderSampleAt = 0;
   if (millis() - lastEncoderSampleAt >= TURN_ENCODER_SAMPLE_MS) {
     lastEncoderSampleAt = millis();
@@ -397,7 +401,17 @@ bool turnControlUpdate(int pwm) {
 
   // err>0 -> target is clockwise of current heading -> turn right (matches
   // turnRight()'s driveSides(+,-) convention in Motors.cpp).
-  if (err > 0) driveTurnWheels( turnPwm, -turnPwm);
-  else         driveTurnWheels(-turnPwm,  turnPwm);
+  if (err > 0) {
+    driveTurnWheels( turnPwm, -turnPwm);
+  } else {
+    // Left turns consistently carry more angular momentum into the
+    // tolerance cutoff than right turns at the same turnPwm (see
+    // TURN_LEFT_SPEED_SCALE in Config.h) -- scale the whole left-turn PWM
+    // down here, after the TURN_PWM_FLOOR clamp above, so the floor and
+    // TURN_KICK_PWM burst both actually come down instead of being
+    // re-clamped back up.
+    int leftTurnPwm = (int)(turnPwm * TURN_LEFT_SPEED_SCALE);
+    driveTurnWheels(-leftTurnPwm, leftTurnPwm);
+  }
   return false;
 }
